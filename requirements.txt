@@ -1,0 +1,16 @@
+# Direct dependencies. Install with:
+#   ../deal-pilot-env/bin/pip install -r requirements.txt
+fastapi==0.128.8
+uvicorn[standard]==0.39.0
+pydantic==2.13.5
+pydantic-settings==2.11.0
+
+# Database
+sqlalchemy[asyncio]==2.0.41
+asyncpg==0.30.0
+alembic==1.14.1
+
+email-validator==2.2.0
+
+# Vector similarity search (pgvector extension bindings for SQLAlchemy)
+pgvector==0.3.6
