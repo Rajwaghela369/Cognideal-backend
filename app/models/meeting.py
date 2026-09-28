@@ -4,7 +4,6 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     DateTime,
     ForeignKey,
     String,
@@ -79,19 +78,19 @@ class Meeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class MeetingAttendee(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """Who was on the call.
 
-    ``contact_id`` is nullable on purpose. Transcript speakers are frequently
-    not in ``contacts`` yet, and those are exactly the people worth surfacing:
-    a name in a transcript that maps to no known contact is the raw signal for
-    "missing stakeholder". Storing only known contacts would discard it.
+    ``raw_name`` is required and ``contact_id`` is the optional *resolution* of
+    that name to a known person -- not the other way round. Two reasons:
+
+    *   Transcript speakers are frequently not in ``contacts`` yet, and those
+        are exactly the people worth surfacing: a name that maps to no known
+        contact is the raw signal for "missing stakeholder".
+    *   Attendance is a historical fact. Deleting a contact sets ``contact_id``
+        to NULL, and a row whose only identity was that link would be left
+        anonymous -- so the name is snapshotted at insert time and the row
+        degrades to "unresolved attendee" instead of breaking.
     """
 
     __tablename__ = "meeting_attendees"
-    __table_args__ = (
-        CheckConstraint(
-            "contact_id IS NOT NULL OR raw_name IS NOT NULL",
-            name="identified_somehow",
-        ),
-    )
 
     meeting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -104,7 +103,7 @@ class MeetingAttendee(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         ForeignKey("contacts.id", ondelete="SET NULL"),
         nullable=True,
     )
-    raw_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    raw_name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_internal: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
