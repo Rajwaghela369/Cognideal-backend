@@ -20,7 +20,8 @@ object storage may hold orphans, never the reverse.**
 """
 
 import re
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 
@@ -39,6 +40,19 @@ TEXT_MIME_TYPES = {
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".vtt", ".srt"}
 
 _PARAGRAPH = re.compile(r"\n\s*\n")
+
+# A transcript turn: a line beginning with a name and a colon.
+#
+# Deliberately narrow. One to four capitalised words, so "Priya Raman:" and
+# "Dana Whitfield:" match while "Policy:" (one lowercase-ish word is still
+# allowed, but a sentence like "Sure. We failed" has no colon) and a bare URL
+# do not. The cost of a false positive here is a fabricated attendee, which is
+# worse than a missed one -- a missing attendee is visible, an invented
+# colleague is not.
+_SPEAKER_TURN = re.compile(
+    r"^(?P<speaker>[A-Z][\w.'-]*(?: [A-Z][\w.'-]*){0,3}):[ \t]",
+    re.MULTILINE,
+)
 
 
 def extract_text(filename: str, mime_type: Optional[str], data: bytes) -> str:
@@ -73,6 +87,40 @@ def extract_text(filename: str, mime_type: Optional[str], data: bytes) -> str:
     return text
 
 
+def parse_speaker_turns(text: str) -> List[Tuple[str, int, int]]:
+    """Find the speaker turns in a transcript: (speaker, start, end).
+
+    ``start`` is the offset of the label itself, so the turn includes
+    "Priya Raman: " -- a span quoted from inside a turn is then always
+    attributable without re-parsing, and the label is part of the text a
+    citation can point at.
+
+    Returns an empty list for anything that is not speaker-labelled, which is
+    what makes this safe to call on every upload: an email or a contract falls
+    straight through to the paragraph-based chunking that has always run.
+    """
+    matches = list(_SPEAKER_TURN.finditer(text))
+    if len(matches) < 2:
+        # One match is far more likely to be a prose line that happens to start
+        # with a capitalised word and a colon than a one-speaker transcript.
+        return []
+
+    turns: List[Tuple[str, int, int]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        turns.append((match.group("speaker"), match.start(), end))
+    return turns
+
+
+def speakers_in(turns: List[Tuple[str, int, int]], start: int, end: int) -> List[str]:
+    """Which speakers a span covers, in order of first appearance."""
+    seen: List[str] = []
+    for speaker, turn_start, turn_end in turns:
+        if turn_start < end and turn_end > start and speaker not in seen:
+            seen.append(speaker)
+    return seen
+
+
 def split_into_chunks(text: str) -> List[Tuple[str, int, int]]:
     """Split text into overlapping spans, returning (content, start, end).
 
@@ -91,6 +139,13 @@ def split_into_chunks(text: str) -> List[Tuple[str, int, int]]:
     size = settings.chunk_size_chars
     overlap = settings.chunk_overlap_chars
 
+    # Transcripts get cut on speaker turns where possible. A chunk that ends
+    # mid-sentence is merely untidy; one that ends mid-turn splits a statement
+    # from the person who made it, and a span quoted across that boundary is
+    # attributable to nobody.
+    turns = parse_speaker_turns(text)
+    boundaries = [turn_start for _, turn_start, _ in turns]
+
     chunks: List[Tuple[str, int, int]] = []
     start = 0
     length = len(text)
@@ -98,16 +153,20 @@ def split_into_chunks(text: str) -> List[Tuple[str, int, int]]:
     while start < length:
         end = min(start + size, length)
         if end < length:
-            # Prefer the last paragraph break inside the window; fall back to a
-            # sentence end, then to a hard cut.
-            window = text[start:end]
-            for pattern in ("\n\n", ". ", "\n"):
-                cut = window.rfind(pattern)
-                # Only honour a break past the halfway mark -- otherwise a
-                # document of short paragraphs produces tiny chunks.
-                if cut > size // 2:
-                    end = start + cut + len(pattern)
-                    break
+            turn_cut = _last_boundary_before(boundaries, start, end, size)
+            if turn_cut is not None:
+                end = turn_cut
+            else:
+                # Prefer the last paragraph break inside the window; fall back
+                # to a sentence end, then to a hard cut.
+                window = text[start:end]
+                for pattern in ("\n\n", ". ", "\n"):
+                    cut = window.rfind(pattern)
+                    # Only honour a break past the halfway mark -- otherwise a
+                    # document of short paragraphs produces tiny chunks.
+                    if cut > size // 2:
+                        end = start + cut + len(pattern)
+                        break
 
         content = text[start:end].strip()
         if content:
@@ -115,8 +174,75 @@ def split_into_chunks(text: str) -> List[Tuple[str, int, int]]:
 
         if end >= length:
             break
-        start = max(end - overlap, start + 1)
 
+        # Overlap, then snap back to a turn start. Ending on a boundary is only
+        # half the job: a chunk whose *start* falls mid-turn opens with an
+        # unattributed fragment, and a span quoted from it has no speaker. For a
+        # transcript the overlap therefore means "re-include the last whole
+        # turn or two", which is a little more than `chunk_overlap_chars` and
+        # the right trade -- every statement in every chunk carries its label.
+        next_start = max(end - overlap, start + 1)
+        snapped = _first_boundary_at_or_before(boundaries, next_start)
+        if snapped is not None and snapped > start:
+            next_start = snapped
+        start = next_start
+
+    return chunks
+
+
+def _first_boundary_at_or_before(boundaries: List[int], position: int) -> Optional[int]:
+    """The latest turn start at or before ``position``, if any."""
+    candidates = [b for b in boundaries if b <= position]
+    return max(candidates) if candidates else None
+
+
+def _last_boundary_before(
+    boundaries: List[int], start: int, end: int, size: int
+) -> Optional[int]:
+    """The latest speaker-turn start inside (start, end], past the halfway mark.
+
+    Halfway for the same reason the paragraph rule uses it: a transcript of
+    one-line exchanges would otherwise produce a chunk per turn, and a chunk
+    holding a single sentence carries no context for the extractor to read.
+    """
+    candidates = [b for b in boundaries if start + size // 2 < b <= end]
+    return max(candidates) if candidates else None
+
+
+@dataclass
+class Chunk:
+    """One chunk, ready to insert.
+
+    Carries its own ``metadata`` so the route does not have to know how speaker
+    attribution is derived. ``docs/schema/README.md`` section 3: metadata is
+    "what turns a retrieved chunk into a clickable citation rather than an
+    unattributed blob".
+    """
+
+    content: str
+    char_start: int
+    char_end: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+def chunk_document(text: str) -> List[Chunk]:
+    """Split text and attribute each chunk. The one entry point for ingest.
+
+    ``speaker`` is set only when the chunk covers exactly one turn, because for
+    anything else a single name would be a lie -- a chunk spanning four turns
+    has no speaker. ``speakers`` carries the full list either way, and is what
+    the roster in Phase 2.2 reads instead of re-parsing the text.
+    """
+    turns = parse_speaker_turns(text)
+    chunks: List[Chunk] = []
+    for content, start, end in split_into_chunks(text):
+        metadata: Dict[str, Any] = {"char_start": start, "char_end": end}
+        covered = speakers_in(turns, start, end)
+        if covered:
+            metadata["speakers"] = covered
+            metadata["speaker"] = covered[0] if len(covered) == 1 else None
+        chunks.append(Chunk(content=content, char_start=start, char_end=end,
+                            metadata=metadata))
     return chunks
 
 

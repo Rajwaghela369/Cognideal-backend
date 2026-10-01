@@ -161,7 +161,7 @@ async def upload_document(
         return await _detail(db, existing)
 
     text = ingest.extract_text(file.filename or "", file.content_type, data)
-    chunks = ingest.split_into_chunks(text)
+    chunks = ingest.chunk_document(text)
 
     document = Document(
         deal_id=deal.id,
@@ -180,16 +180,19 @@ async def upload_document(
     db.add(document)
     await db.flush()
 
-    for index, (content, char_start, char_end) in enumerate(chunks):
+    for index, chunk in enumerate(chunks):
         db.add(
             DocumentChunk(
                 document_id=document.id,
                 chunk_index=index,
-                content=content,
-                token_count=len(content.split()),
+                content=chunk.content,
+                token_count=len(chunk.content.split()),
                 # embedding stays NULL: nothing searches by similarity yet, and
                 # computing it here would put an API call inside this request.
-                chunk_metadata={"char_start": char_start, "char_end": char_end},
+                #
+                # metadata carries the offsets and, for a transcript, who is
+                # speaking -- see services/ingest.chunk_document.
+                chunk_metadata=chunk.metadata,
             )
         )
     await db.flush()
