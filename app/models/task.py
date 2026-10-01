@@ -7,13 +7,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.db.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
-    ActivityType,
     Origin,
     Priority,
     TaskStatus,
-    check_in,
     origin_enum,
     priority_enum,
     task_status_enum,
@@ -62,35 +60,4 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
-    )
-
-
-class Activity(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
-    """Append-only deal timeline."""
-
-    __tablename__ = "activities"
-    __table_args__ = (
-        check_in("activity_type", ActivityType, "activity_type"),
-        Index("ix_activities_deal_id_occurred_at", "deal_id", "occurred_at"),
-    )
-
-    deal_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("deals.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    contact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("contacts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    meeting_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("meetings.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    activity_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
     )

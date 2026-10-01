@@ -131,15 +131,6 @@ class DocumentSourceType(str, Enum):
     NOTE = "note"
 
 
-class IngestStatus(str, Enum):
-    PENDING = "pending"
-    PARSING = "parsing"
-    CHUNKING = "chunking"
-    EMBEDDING = "embedding"
-    READY = "ready"
-    FAILED = "failed"
-
-
 class SourceKind(str, Enum):
     """What a piece of evidence points at.
 
@@ -289,6 +280,22 @@ class RiskType(str, Enum):
     GONE_QUIET = "gone_quiet"
 
 
+class DismissalReason(str, Enum):
+    """Why a human said no to a recommendation.
+
+    Countable on purpose. "40% of dismissals are `wrong`" says the detector
+    needs work; "40% are `already_handled`" says it is right but late. A single
+    free-text field would give neither -- which is why `dismissal_note` exists
+    alongside it for the detail.
+    """
+
+    ALREADY_HANDLED = "already_handled"
+    NOT_RELEVANT = "not_relevant"
+    WRONG = "wrong"
+    BAD_TIMING = "bad_timing"
+    OTHER = "other"
+
+
 class ActionType(str, Enum):
     SCHEDULE_MEETING = "schedule_meeting"
     SEND_DOCUMENT = "send_document"
@@ -319,7 +326,6 @@ meeting_status_enum = pg_enum(MeetingStatus, "meeting_status")
 analysis_status_enum = pg_enum(AnalysisStatus, "analysis_status")
 task_status_enum = pg_enum(TaskStatus, "task_status")
 document_source_type_enum = pg_enum(DocumentSourceType, "document_source_type")
-ingest_status_enum = pg_enum(IngestStatus, "ingest_status")
 source_kind_enum = pg_enum(SourceKind, "source_kind")
 claim_type_enum = pg_enum(ClaimType, "claim_type")
 verification_status_enum = pg_enum(VerificationStatus, "verification_status")

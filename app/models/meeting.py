@@ -6,10 +6,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -30,13 +32,19 @@ from app.models.enums import (
 
 class Meeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "meetings"
-    __table_args__ = (check_in("meeting_type", MeetingType, "meeting_type"),)
+    __table_args__ = (
+        check_in("meeting_type", MeetingType, "meeting_type"),
+        # Every read of this table is "one deal's meetings, newest first" --
+        # the track on the deal page. A bare deal_id index finds the rows and
+        # then sorts them separately. deal_id-leading, so it serves the plain
+        # lookup the old index served.
+        Index("ix_meetings_deal_id_scheduled_at", "deal_id", "scheduled_at"),
+    )
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("deals.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     meeting_type: Mapped[str] = mapped_column(
@@ -91,6 +99,26 @@ class MeetingAttendee(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """
 
     __tablename__ = "meeting_attendees"
+    __table_args__ = (
+        # "Has this person attended any meeting?" walks contact_id -> meetings,
+        # and that is the direction the product is built on: the missing
+        # stakeholder list and the NO_ECONOMIC_BUYER risk both run it once per
+        # person. It was the one direction with no index.
+        Index("ix_meeting_attendees_contact_id", "contact_id"),
+        # One row per resolved person per meeting. Without this the same
+        # contact can be added twice -- once from the invite, once from the
+        # transcript -- and every attendance count is silently wrong.
+        #
+        # Partial, because unresolved attendees all carry contact_id IS NULL
+        # and a meeting may legitimately have many of those.
+        Index(
+            "uq_meeting_attendees_meeting_id_contact_id",
+            "meeting_id",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+    )
 
     meeting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

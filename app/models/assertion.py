@@ -32,6 +32,7 @@ from app.db.base import Base
 from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
     ActionType,
+    DismissalReason,
     CommitmentStatus,
     FactStatus,
     FactType,
@@ -189,13 +190,52 @@ class Recommendation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ``created_task_id``."""
 
     __tablename__ = "recommendations"
-    __table_args__ = (check_in("action_type", ActionType, "action_type"),)
+    __table_args__ = (
+        check_in("action_type", ActionType, "action_type"),
+        check_in("dismissal_reason", DismissalReason, "dismissal_reason"),
+        Index("ix_recommendations_source_risk_id", "source_risk_id"),
+        # One live suggestion per risk. The detector runs repeatedly, and
+        # without this it re-creates the same advice every pass.
+        #
+        # Keyed on the risk, NOT on action_type: two risks legitimately share
+        # one action_type -- "engage the economic buyer" and "broaden beyond
+        # one contact" are both `engage_stakeholder` but are different advice,
+        # and keying on action_type silently dropped the second.
+        #
+        # Scoped to `suggested` so a dismissal does not block a fresh
+        # suggestion later, and to source_risk_id IS NOT NULL so proactive
+        # recommendations -- which have no risk -- are not capped at one.
+        Index(
+            "uq_recommendations_deal_id_source_risk_id_suggested",
+            "deal_id",
+            "source_risk_id",
+            unique=True,
+            postgresql_where=text(
+                "status = 'suggested' AND source_risk_id IS NOT NULL"
+            ),
+        ),
+    )
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("deals.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    # The risk this answers. Nullable because a *proactive* recommendation has
+    # none -- "their fiscal year ends in six weeks, push to close" is good
+    # advice that is not fixing anything.
+    #
+    # SET NULL rather than CASCADE: if the risk goes, an accepted
+    # recommendation and the task it created are still real work.
+    #
+    # Without this column there is no link between risks and recommendations at
+    # all -- they shared only their evidence rows, which is a terrible thing to
+    # join a UI on. Follows tasks.source_fact_id and commitments.source_fact_id.
+    source_risk_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("risks.id", ondelete="SET NULL"),
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -224,3 +264,6 @@ class Recommendation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("tasks.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Structured so dismissals can be counted; the note carries the detail.
+    dismissal_reason: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    dismissal_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

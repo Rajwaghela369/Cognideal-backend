@@ -14,7 +14,9 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -78,25 +80,54 @@ class Deal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
-class DealContact(TimestampMixin, Base):
+class DealContact(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Which people matter on which deal, and how.
 
     This table is what makes "no economic buyer has ever attended a meeting" a
     SQL query rather than a model's guess. Missing-stakeholder detection lives
     or dies on ``buying_role``.
+
+    ``(deal_id, contact_id)`` is still the logical identity -- it is what the
+    API addresses a row by, and the UNIQUE constraint enforces it. The
+    surrogate ``id`` exists because ``extracted_facts.promoted_to_id`` is a
+    single uuid: a human accepting a ``stakeholder`` fact had nowhere to record
+    which link it became, this being the one promotion target whose primary key
+    was a pair. Every other target already had one.
     """
 
     __tablename__ = "deal_contacts"
+    __table_args__ = (
+        UniqueConstraint("deal_id", "contact_id"),
+        # The UNIQUE index above is deal_id-leading, so "who is on this deal?"
+        # is covered. The reverse -- "which deals is this person on?", which is
+        # GET /contacts/{id}/deals -- is not.
+        Index("ix_deal_contacts_contact_id", "contact_id"),
+        # At most one primary contact per deal; zero is fine. Without this,
+        # "who do we talk to here?" is answered by whichever of two flagged
+        # rows the planner happens to return, and that can change between two
+        # identical requests.
+        #
+        # Partial uniqueness can only ever be an index, never a constraint, so
+        # it cannot be DEFERRABLE -- a write setting is_primary must therefore
+        # demote the incumbent in an *earlier statement*, not merely the same
+        # transaction. See services.deal.set_primary_stakeholder.
+        Index(
+            "uq_deal_contacts_deal_id_primary",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+    )
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("deals.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
     contact_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("contacts.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
     buying_role: Mapped[BuyingRole] = mapped_column(
         buying_role_enum, nullable=False, server_default=BuyingRole.UNKNOWN.value
@@ -120,12 +151,19 @@ class DealStageHistory(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     maintain, impossible to reconstruct later if skipped."""
 
     __tablename__ = "deal_stage_history"
+    __table_args__ = (
+        # Every read of this table is "one deal's transitions, in order" -- the
+        # timeline, and the LEAD() that derives time-in-stage from it. A bare
+        # deal_id index finds the rows and then sorts them in memory. Composite
+        # and deal_id-leading, so it serves the plain lookup too. Mirrors
+        # ix_activities_deal_id_occurred_at.
+        Index("ix_deal_stage_history_deal_id_changed_at", "deal_id", "changed_at"),
+    )
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("deals.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     from_stage: Mapped[Optional[DealStage]] = mapped_column(deal_stage_enum, nullable=True)
     to_stage: Mapped[DealStage] = mapped_column(deal_stage_enum, nullable=False)

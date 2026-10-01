@@ -13,7 +13,7 @@ from app.models.deal import Deal, DealContact, DealStageHistory
 from app.models.document import Document, DocumentChunk
 from app.models.evidence import ClaimEvidence, ClaimValidation, Evidence
 from app.models.meeting import Meeting, MeetingAttendee, MeetingBrief
-from app.models.task import Activity, Task
+from app.models.task import Task
 
 __all__: list[str] = [
     # Layer A -- deal domain
@@ -25,7 +25,6 @@ __all__: list[str] = [
     "Meeting",
     "MeetingAttendee",
     "Task",
-    "Activity",
     # Layer B -- knowledge and ingest
     "Document",
     "DocumentChunk",

@@ -19,12 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.config import settings
 from app.db.base import Base
 from app.db.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import (
-    DocumentSourceType,
-    IngestStatus,
-    document_source_type_enum,
-    ingest_status_enum,
-)
+from app.models.enums import DocumentSourceType, document_source_type_enum
 
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -33,6 +28,16 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     Transcripts, emails, proposals, contracts and notes are discriminated by
     ``source_type`` rather than split across five tables: a RAG query wants
     "everything relevant to this deal", not a five-way union.
+
+    **A row exists only when the document is fully ingested** -- text
+    extracted, chunks written, bytes in object storage. There is no
+    ``ingest_status``: anything that fails leaves no row at all, so every
+    document the API can see is usable. Dropped in ``0008_document_all_or_
+    nothing``.
+
+    ``raw_text`` is gone for the same reason it was always redundant: the
+    chunks, ordered by ``chunk_index``, *are* the text. The original file is
+    served from object storage for preview.
     """
 
     __tablename__ = "documents"
@@ -57,11 +62,16 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    storage_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Object key in MinIO, not a URL: documents/{content_hash}. NOT NULL
+    # because a document row only exists once its bytes are stored -- there is
+    # no half-ingested state to represent.
+    storage_uri: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     byte_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # sha256 of the bytes. The idempotency key *and* the storage key, so a
+    # re-upload writes identical bytes to the same object rather than
+    # duplicating them.
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     # When the conversation actually happened -- NOT when the file was dragged
     # in. Recency ranking must use this one: a June transcript uploaded today
     # is still a June transcript.
@@ -71,10 +81,6 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    ingest_status: Mapped[IngestStatus] = mapped_column(
-        ingest_status_enum, nullable=False, server_default=IngestStatus.PENDING.value
-    )
-    ingest_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
