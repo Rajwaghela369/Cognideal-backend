@@ -1,0 +1,24 @@
+Maya Chen: Thanks for making time, Priya. I know you've got the audit coming up, so I want to be useful rather than give you the full tour. Can you tell me what prompted you to look at this now?
+Priya Raman: Sure. We failed an internal control review in May. Not catastrophically, but the finding was that we can't produce an access log for third-party integrations going back more than thirty days. Our auditors want twelve months.
+Maya Chen: Twelve months of retention on integration access specifically, or everything?
+Priya Raman: Integration access is the finding. But honestly if we're replacing the logging layer I'd want everything in one place. Marcus has opinions about that.
+Marcus Webb: I do. We've got four systems writing audit events and none of them agree on a timestamp format. Whatever we buy has to normalise that on ingest, not make my team write adapters.
+Maya Chen: That's a fair requirement. Let me write that down — normalisation on ingest, no customer-side adapters. Marcus, how many events a day are we talking?
+Marcus Webb: Peak is around nine million. Average closer to five.
+Maya Chen: That's comfortably inside what we handle. Priya, who else needs to be part of this decision?
+Priya Raman: Me for the security side, Marcus for the platform side. Finance will need to sign off on the number but that's a formality if it lands where I think it will.
+Maya Chen: What do you think it'll land at?
+Priya Raman: I've got about a hundred and fifty thousand in the security budget for this year. Anything over a hundred and fifty thousand has to go to the board, and the board meets quarterly, so I would very much like to stay under it.
+Maya Chen: Understood. I'll be straight with you — for nine million events a day with twelve month retention, the enterprise tier is where you'd land, and that's typically a bit above that. Let's see what we can do on scope.
+Tom Alvarez: Can I jump in? Tom, procurement. If this goes above the threshold Priya mentioned, it's not just the board, it's a full competitive process. We'd have to put it out to at least two other vendors.
+Maya Chen: That's useful to know, Tom. Is that policy or preference?
+Tom Alvarez: Policy. Over a hundred and fifty, three bids minimum.
+Priya Raman: Which is part of why I'd like to stay under. We also looked at Vanta Logs briefly — they came in cheaper but they don't do the normalisation Marcus is asking about, so it'd be a false economy.
+Maya Chen: Noted. What's your timeline looking like?
+Priya Raman: The audit is in Q4. I'd want this in production before then, which working backwards means signed by the middle of October at the latest.
+Maya Chen: Then let's move. Two things I'll do: I'll get you a scoping proposal that keeps us inside your threshold if that's possible, and I'll send over our SOC 2 Type II report so your security review can start in parallel rather than after.
+Priya Raman: That would help a lot. When can I expect the SOC 2?
+Maya Chen: I'll have it to you by the seventh of August.
+Priya Raman: Good. My team needs about three weeks with it, so that works with the October date.
+Marcus Webb: One more thing. We're not signing anything until my team has run a load test against a sandbox. Not a demo — our data, our volumes.
+Maya Chen: That's reasonable. I'll include sandbox access in the proposal.

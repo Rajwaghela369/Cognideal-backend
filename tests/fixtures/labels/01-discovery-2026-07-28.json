@@ -1,0 +1,172 @@
+{
+  "transcript": "transcripts/01-discovery-2026-07-28.txt",
+  "_comment": "Ground truth for the discovery call. `snippet` is verbatim and authored by hand; `chunk_index`/`char_start`/`char_end` are filled in by resolve_labels.py from the chunks the real upload path produced. Do not hand-edit the offsets.",
+  "facts": [
+    {
+      "id": "d1",
+      "fact_type": "requirement",
+      "content": "Audit requires twelve months of retention on third-party integration access logs",
+      "snippet": "Our auditors want twelve months.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "what": "twelve months retention on integration access logs"
+      },
+      "chunk_index": 0,
+      "char_start": 400,
+      "char_end": 432
+    },
+    {
+      "id": "d2",
+      "fact_type": "requirement",
+      "content": "Timestamp normalisation must happen on ingest, with no customer-side adapters",
+      "snippet": "Whatever we buy has to normalise that on ingest, not make my team write adapters.",
+      "speaker": "Marcus Webb",
+      "payload": {
+        "what": "normalisation on ingest, no customer-written adapters"
+      },
+      "chunk_index": 0,
+      "char_start": 795,
+      "char_end": 876
+    },
+    {
+      "id": "d3",
+      "fact_type": "budget",
+      "content": "Security budget for this year is about a hundred and fifty thousand",
+      "snippet": "I've got about a hundred and fifty thousand in the security budget for this year.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "amount": "a hundred and fifty thousand",
+        "currency": null,
+        "basis": "annual security budget"
+      },
+      "_note": "The amount is spoken, never numeric. A claim asserting \"$150,000\" has no literal match here and Gate 0's literal rule must reject it.",
+      "chunk_index": 1,
+      "char_start": 594,
+      "char_end": 675
+    },
+    {
+      "id": "d4",
+      "fact_type": "decision_criteria",
+      "content": "Spend above a hundred and fifty thousand requires board approval, and the board meets quarterly",
+      "snippet": "Anything over a hundred and fifty thousand has to go to the board, and the board meets quarterly",
+      "speaker": "Priya Raman",
+      "payload": {
+        "criterion": "board approval above threshold",
+        "cadence": "quarterly"
+      },
+      "chunk_index": 1,
+      "char_start": 676,
+      "char_end": 772
+    },
+    {
+      "id": "d5",
+      "fact_type": "decision_criteria",
+      "content": "Procurement policy requires three bids above the threshold",
+      "snippet": "Over a hundred and fifty, three bids minimum.",
+      "speaker": "Tom Alvarez",
+      "payload": {
+        "criterion": "three competitive bids above threshold"
+      },
+      "chunk_index": 2,
+      "char_start": 650,
+      "char_end": 695
+    },
+    {
+      "id": "d6",
+      "fact_type": "competitor",
+      "content": "Vanta Logs was evaluated and dismissed for lacking normalisation",
+      "snippet": "We also looked at Vanta Logs briefly",
+      "speaker": "Priya Raman",
+      "payload": {
+        "competitor": "Vanta Logs",
+        "status": "dismissed_in_same_breath"
+      },
+      "_note": "Named once and rejected immediately. A detector reading this as active competitive pressure is a false positive.",
+      "chunk_index": 2,
+      "char_start": 754,
+      "char_end": 790
+    },
+    {
+      "id": "d7",
+      "fact_type": "deadline",
+      "content": "Signature needed by the middle of October to be in production before the Q4 audit",
+      "snippet": "signed by the middle of October at the latest",
+      "speaker": "Priya Raman",
+      "payload": {
+        "date": "middle of October",
+        "what": "signature"
+      },
+      "chunk_index": 3,
+      "char_start": 221,
+      "char_end": 266
+    },
+    {
+      "id": "d8",
+      "fact_type": "commitment",
+      "content": "Maya Chen will send the SOC 2 Type II report by the seventh of August",
+      "snippet": "I'll have it to you by the seventh of August.",
+      "speaker": "Maya Chen",
+      "payload": {
+        "owner_side": "us",
+        "owner_name": "Maya Chen",
+        "due_date": "the seventh of August",
+        "what": "SOC 2 Type II report"
+      },
+      "relations": {
+        "unfulfilled_evidence": "s1",
+        "exercises": "missed_commitment"
+      },
+      "chunk_index": 3,
+      "char_start": 589,
+      "char_end": 634
+    },
+    {
+      "id": "d9",
+      "fact_type": "decision_criteria",
+      "content": "No signature before a load test against a sandbox using Northwind's own data and volumes",
+      "snippet": "We're not signing anything until my team has run a load test against a sandbox.",
+      "speaker": "Marcus Webb",
+      "payload": {
+        "criterion": "load test on customer data before signature"
+      },
+      "chunk_index": 3,
+      "char_start": 761,
+      "char_end": 840
+    },
+    {
+      "id": "d10",
+      "fact_type": "stakeholder",
+      "content": "Tom Alvarez is in procurement at Northwind",
+      "snippet": "Tom, procurement.",
+      "speaker": "Tom Alvarez",
+      "payload": {
+        "name": "Tom Alvarez",
+        "role": "procurement",
+        "known_contact": false
+      },
+      "_note": "Not in `contacts`. Entity resolution must leave contact_id NULL rather than guessing.",
+      "chunk_index": 2,
+      "char_start": 379,
+      "char_end": 396
+    },
+    {
+      "id": "d11",
+      "fact_type": "stakeholder",
+      "content": "Priya owns the security decision and Marcus the platform decision; finance signs off on the number",
+      "snippet": "Me for the security side, Marcus for the platform side.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "security": "Priya Raman",
+        "platform": "Marcus Webb"
+      },
+      "chunk_index": 1,
+      "char_start": 379,
+      "char_end": 434
+    }
+  ],
+  "expected_risks_after": [
+    "no_economic_buyer",
+    "single_threaded"
+  ],
+  "_risks_comment": "Nobody who can approve spend is present. single_threaded is arguable with three external speakers -- it is listed to check the rule reads attendees rather than contacts."
+}

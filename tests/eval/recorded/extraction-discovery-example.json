@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "A RECORDED run, not a real one -- hand-built so the metrics have a fixed",
+    "input with known answers. Spans are the real offsets resolve_labels.py",
+    "derived for the discovery transcript, so the matching rule is exercised",
+    "against genuine chunk coordinates rather than invented ones.",
+    "Deliberately imperfect: one exact hit, one hit with a shifted span, one",
+    "right-span-wrong-type, one invention, and the rest missed."
+  ],
+  "transcript": "transcripts/01-discovery-2026-07-28.txt",
+  "model": "openai/gpt-oss-120b",
+  "prompt_version": "extract@1",
+
+  "predicted_facts": [
+    { "fact_type": "requirement", "chunk_index": 0, "char_start": 400, "char_end": 432,
+      "content": "Auditors require twelve months of retention", "confidence": 0.91,
+      "_expect": "exact match on d1" },
+
+    { "fact_type": "budget", "chunk_index": 1, "char_start": 600, "char_end": 680,
+      "content": "Security budget is around 150k", "confidence": 0.84,
+      "_expect": "matches d3 on overlap despite a shifted span" },
+
+    { "fact_type": "requirement", "chunk_index": 2, "char_start": 754, "char_end": 790,
+      "content": "They evaluated Vanta Logs", "confidence": 0.55,
+      "_expect": "right span, wrong fact_type -> a false positive AND d6 missed" },
+
+    { "fact_type": "budget", "chunk_index": 0, "char_start": 100, "char_end": 140,
+      "content": "Budget was approved at $150,000 on 2026-07-28", "confidence": 0.88,
+      "_expect": "invented: a false positive, and the numerals appear in no span" }
+  ],
+
+  "claim_evidence_links": [
+    { "claim_id": "c1", "verification_status": "verified" },
+    { "claim_id": "c2", "verification_status": "verified" },
+    { "claim_id": "c3", "verification_status": "span_missing",
+      "_why": "the snippet was a paraphrase, not a quote" },
+    { "claim_id": "c4", "verification_status": "span_missing",
+      "_why": "fabricated: '$150,000' and '2026-07-28' appear nowhere" },
+    { "claim_id": "c5", "verification_status": "value_drifted",
+      "_why": "cited deals.stage, which has since moved" }
+  ],
+
+  "validations": [
+    { "claim_id": "c1", "verdict": "supported",     "confidence": 0.91 },
+    { "claim_id": "c2", "verdict": "partial",       "confidence": 0.84 },
+    { "claim_id": "c3", "verdict": "unsupported",   "confidence": 0.55 },
+    { "claim_id": "c4", "verdict": "contradicted",  "confidence": 0.88,
+      "_why": "high confidence and wrong -- the most valuable eval case there is" },
+    { "claim_id": "c5", "verdict": "supported",     "confidence": 0.72 }
+  ],
+
+  "risk_run_a": [
+    { "risk_type": "no_economic_buyer" },
+    { "risk_type": "stalled_stage" },
+    { "risk_type": "other", "risk_key": "champion_going_quiet" }
+  ],
+  "risk_run_b": [
+    { "risk_type": "no_economic_buyer", "title": "Nobody who can sign has attended" },
+    { "risk_type": "stalled_stage", "title": "Deal has not moved in 58 days" },
+    { "risk_type": "other", "risk_key": "champion_disengaged" }
+  ],
+  "_risk_comment": "Runs a and b are the same deal, unchanged. The first two keys match despite different prose -- which is the point of keying on risk_type. The third flickers because the model invented a different slug for one problem, which is exactly what task 7.8's canonicalisation has to collapse.",
+
+  "rule_risks": [
+    { "risk_type": "no_economic_buyer" },
+    { "risk_type": "stalled_stage" },
+    { "risk_type": "single_threaded" }
+  ],
+  "_rule_comment": "What the deterministic detector found. run_a missed single_threaded -- a measured recall miss with no human labelling, which is what task 7.4 reports."
+}

@@ -1,0 +1,22 @@
+Priya Raman: Before we start — Maya, we never got the SOC 2.
+Maya Chen: I know, and that's on me. It got caught in our legal review because you're in a regulated sector and they wanted to redact a subprocessor list. I should have told you it was delayed rather than letting the date pass.
+Priya Raman: It's put us behind. My team blocked out the last two weeks of August for this and now they're on something else. Realistically they can pick it up in September.
+Maya Chen: Understood. I'll have the report to you this week, redacted version, and I'll flag which sections were touched.
+Priya Raman: Fine. But understand that my security sign-off is now the critical path, not the commercial terms.
+Marcus Webb: Can we talk about the sandbox while we're here? I've got the load test plan written.
+Maya Chen: Go ahead.
+Marcus Webb: Nine million events over a twenty-four hour window, replayed from a production capture with the identifiers scrubbed. I want to see p99 ingest latency and I want to see what happens when we push a malformed timestamp through, because we will.
+Maya Chen: We can do that. The malformed timestamp case is a good one — our normaliser quarantines rather than drops, and you should see that working rather than take my word for it.
+Marcus Webb: That's exactly the sort of thing I want to see.
+Priya Raman: Separate issue. My security team came back with a question on your authentication model. They want to know whether you support SCIM provisioning, because our identity team is standardising on it and anything that doesn't support it has to go through an exception process.
+Maya Chen: We support SCIM 2.0.
+Priya Raman: Then that's one less problem. The bigger one is this — and I want to be direct about it — my team hasn't signed off on the architecture yet and they haven't even started looking at it. Until they do, I can't take this to anyone internally. That's a hard dependency.
+Maya Chen: I hear you. What would make that go faster?
+Priya Raman: Get me the SOC 2, and get me a named security contact on your side who can answer my team's questions in a day rather than a week.
+Maya Chen: You'll have both. I'll put you in touch with our security lead directly.
+Tom Alvarez: On the commercial side, where did the scoping land?
+Maya Chen: I've got a proposal that comes in at a hundred and sixty-two thousand. I know that's above the threshold.
+Tom Alvarez: Then it's a competitive process. I can't waive that.
+Priya Raman: Which means we lose six weeks. Maya, is there a version of this that comes in under a hundred and fifty?
+Maya Chen: There is, but it drops the twelve month retention to six, and six doesn't solve your audit finding.
+Priya Raman: Then it's not a version of this. Leave it with me — I may be able to make an argument for the full number, but it's not a conversation I can have until security has signed off.

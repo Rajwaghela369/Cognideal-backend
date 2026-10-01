@@ -1,0 +1,141 @@
+{
+  "transcript": "transcripts/03-negotiation-checkin-2026-09-18.txt",
+  "facts": [
+    {
+      "id": "n1",
+      "fact_type": "budget",
+      "content": "The CFO approved two hundred and twenty thousand, covering full retention and professional services",
+      "snippet": "I've approved two hundred and twenty thousand for this",
+      "speaker": "Dana Whitfield",
+      "payload": {
+        "amount": "two hundred and twenty thousand",
+        "currency": null,
+        "basis": "CFO approval"
+      },
+      "relations": {
+        "supersedes": "d3",
+        "exercises": "supersession"
+      },
+      "_note": "The contradiction. d3 said about a hundred and fifty thousand. The earlier fact must be marked superseded and KEPT, never overwritten.",
+      "chunk_index": 0,
+      "char_start": 349,
+      "char_end": 403
+    },
+    {
+      "id": "n2",
+      "fact_type": "stakeholder",
+      "content": "Dana Whitfield is the CFO and is the economic buyer for this deal",
+      "snippet": "Dana Whitfield, I'm the CFO here.",
+      "speaker": "Dana Whitfield",
+      "payload": {
+        "name": "Dana Whitfield",
+        "role": "CFO",
+        "buying_role": "economic_buyer",
+        "known_contact": false
+      },
+      "relations": {
+        "exercises": "no_economic_buyer_resolution"
+      },
+      "chunk_index": 0,
+      "char_start": 200,
+      "char_end": 233
+    },
+    {
+      "id": "n3",
+      "fact_type": "objection",
+      "content": "Security review is complete and the team has signed off",
+      "snippet": "My team has signed off.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "objection": "security sign-off outstanding",
+        "status": "resolved"
+      },
+      "relations": {
+        "resolves": "s2"
+      },
+      "_note": "An objection still rendered as open after this means Gate 2 staleness is not working.",
+      "chunk_index": 1,
+      "char_start": 442,
+      "char_end": 465
+    },
+    {
+      "id": "n4",
+      "fact_type": "decision_criteria",
+      "content": "Professional services must be fixed fee, not time and materials",
+      "snippet": "I want the professional services scope written as fixed fee, not time and materials.",
+      "speaker": "Dana Whitfield",
+      "payload": {
+        "criterion": "fixed-fee professional services"
+      },
+      "chunk_index": 2,
+      "char_start": 430,
+      "char_end": 514
+    },
+    {
+      "id": "n5",
+      "fact_type": "deadline",
+      "content": "Legal needs ten business days; signature expected in the second week of October",
+      "snippet": "we sign by the second week of October",
+      "speaker": "Dana Whitfield",
+      "payload": {
+        "date": "second week of October",
+        "what": "signature",
+        "lead_time": "ten business days"
+      },
+      "chunk_index": 2,
+      "char_start": 187,
+      "char_end": 224
+    },
+    {
+      "id": "n6",
+      "fact_type": "commitment",
+      "content": "Maya Chen will send the order form and MSA to legal by Friday the twentieth",
+      "snippet": "I'll have the order form and the MSA to your legal team by Friday the twentieth.",
+      "speaker": "Maya Chen",
+      "payload": {
+        "owner_side": "us",
+        "owner_name": "Maya Chen",
+        "due_date": "Friday the twentieth",
+        "what": "order form and MSA"
+      },
+      "chunk_index": 2,
+      "char_start": 318,
+      "char_end": 398
+    },
+    {
+      "id": "n7",
+      "fact_type": "requirement",
+      "content": "The sandbox must remain available through the migration for cutover rehearsal",
+      "snippet": "I want the sandbox left standing through the migration.",
+      "speaker": "Marcus Webb",
+      "payload": {
+        "what": "sandbox retained through migration"
+      },
+      "chunk_index": 2,
+      "char_start": 624,
+      "char_end": 679
+    },
+    {
+      "id": "n8",
+      "fact_type": "requirement",
+      "content": "Load test passed: p99 ingest under four hundred milliseconds at nine million events",
+      "snippet": "p99 ingest was under four hundred milliseconds at nine million events",
+      "speaker": "Marcus Webb",
+      "payload": {
+        "what": "load test acceptance",
+        "status": "passed"
+      },
+      "relations": {
+        "satisfies": "d9"
+      },
+      "chunk_index": 1,
+      "char_start": 525,
+      "char_end": 594
+    }
+  ],
+  "expected_risks_after": [
+    "stalled_stage",
+    "close_date_at_risk"
+  ],
+  "_risks_comment": "Security and the economic buyer are resolved. The deal is still recorded as `discovery` with a close date three weeks out, which is exactly what stalled_stage and close_date_at_risk are for -- both computable with no model."
+}

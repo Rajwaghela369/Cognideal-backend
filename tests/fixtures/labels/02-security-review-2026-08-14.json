@@ -1,0 +1,122 @@
+{
+  "transcript": "transcripts/02-security-review-2026-08-14.txt",
+  "facts": [
+    {
+      "id": "s1",
+      "fact_type": "objection",
+      "content": "The SOC 2 Type II report was never delivered, putting the security review behind",
+      "snippet": "Maya, we never got the SOC 2.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "objection": "committed deliverable not received"
+      },
+      "relations": {
+        "shows_unfulfilled": "d8"
+      },
+      "chunk_index": 0,
+      "char_start": 31,
+      "char_end": 60
+    },
+    {
+      "id": "s2",
+      "fact_type": "objection",
+      "content": "Security sign-off is a hard dependency and the team has not started reviewing the architecture",
+      "snippet": "my team hasn't signed off on the architecture yet and they haven't even started looking at it",
+      "speaker": "Priya Raman",
+      "payload": {
+        "objection": "security sign-off outstanding",
+        "blocking": true
+      },
+      "relations": {
+        "resolved_by": "n3",
+        "exercises": "security_review_pending"
+      },
+      "chunk_index": 2,
+      "char_start": 210,
+      "char_end": 303
+    },
+    {
+      "id": "s3",
+      "fact_type": "requirement",
+      "content": "SCIM provisioning is required or an identity exception process applies",
+      "snippet": "They want to know whether you support SCIM provisioning",
+      "speaker": "Priya Raman",
+      "payload": {
+        "what": "SCIM 2.0 provisioning"
+      },
+      "chunk_index": 1,
+      "char_start": 621,
+      "char_end": 676
+    },
+    {
+      "id": "s4",
+      "fact_type": "budget",
+      "content": "The scoped proposal comes in at a hundred and sixty-two thousand, above the board threshold",
+      "snippet": "I've got a proposal that comes in at a hundred and sixty-two thousand.",
+      "speaker": "Maya Chen",
+      "payload": {
+        "amount": "a hundred and sixty-two thousand",
+        "currency": null,
+        "basis": "proposal"
+      },
+      "chunk_index": 2,
+      "char_start": 745,
+      "char_end": 815
+    },
+    {
+      "id": "s5",
+      "fact_type": "commitment",
+      "content": "Maya Chen will send the redacted SOC 2 report this week, flagging redacted sections",
+      "snippet": "I'll have the report to you this week, redacted version",
+      "speaker": "Maya Chen",
+      "payload": {
+        "owner_side": "us",
+        "owner_name": "Maya Chen",
+        "due_date": "this week",
+        "what": "redacted SOC 2 report"
+      },
+      "relations": {
+        "satisfied_by": "n3"
+      },
+      "chunk_index": 0,
+      "char_start": 486,
+      "char_end": 541
+    },
+    {
+      "id": "s6",
+      "fact_type": "deadline",
+      "content": "Security review slips to September because the blocked time was reallocated",
+      "snippet": "Realistically they can pick it up in September.",
+      "speaker": "Priya Raman",
+      "payload": {
+        "date": "September",
+        "what": "security review"
+      },
+      "chunk_index": 0,
+      "char_start": 415,
+      "char_end": 462
+    },
+    {
+      "id": "s7",
+      "fact_type": "decision_criteria",
+      "content": "Above the threshold a competitive process is mandatory and cannot be waived by procurement",
+      "snippet": "Then it's a competitive process. I can't waive that.",
+      "speaker": "Tom Alvarez",
+      "payload": {
+        "criterion": "competitive process above threshold",
+        "waivable_by_procurement": false
+      },
+      "chunk_index": 2,
+      "char_start": 864,
+      "char_end": 916,
+      "appears_in_chunks": 2
+    }
+  ],
+  "expected_risks_after": [
+    "no_economic_buyer",
+    "security_review_pending",
+    "missed_commitment",
+    "stalled_stage"
+  ],
+  "_risks_comment": "missed_commitment is computable from commitments alone once d8 is promoted and its due date passes. stalled_stage because the deal is still `discovery` 17 days in and climbing."
+}

@@ -1,0 +1,98 @@
+{
+  "_comment": [
+    "The fixture corpus: one deal, three meetings, three months. Shaped so that",
+    "each downstream phase has something real to find -- see planted_cases.",
+    "Structural rows (account, deal, contacts, meetings) are inserted directly",
+    "because they need backdated timestamps the API will not accept. Documents",
+    "go through the real HTTP upload path, because that is what produces the",
+    "chunks and the offsets every label in labels/ points into.",
+    "Attendees are deliberately NOT seeded: deriving them from transcript",
+    "speaker labels is Phase 2.2, and seeding them would hide whether it works."
+  ],
+
+  "account": { "name": "Northwind Logistics", "industry": "Logistics" },
+
+  "deal": {
+    "name": "SecureFlow Enterprise",
+    "stage": "discovery",
+    "value": 180000,
+    "currency": "USD",
+    "expected_close_date": "2026-10-15",
+    "created_at": "2026-07-21T09:00:00Z",
+    "_comment": "Stage stays `discovery` though the transcripts clearly progress past it -- that is the stalled_stage risk, detectable with no model."
+  },
+
+  "contacts": [
+    { "first_name": "Priya", "last_name": "Raman", "title": "Director of IT Security",
+      "buying_role": "champion", "influence": "high", "is_primary": true },
+    { "first_name": "Marcus", "last_name": "Webb", "title": "Platform Lead",
+      "buying_role": "technical", "influence": "medium", "is_primary": false }
+  ],
+  "_contacts_comment": "Tom Alvarez (procurement) and Dana Whitfield (CFO) speak in the transcripts but are deliberately absent here. Tom is the unresolved-attendee signal; Dana is the economic buyer whose arrival in meeting 3 should resolve no_economic_buyer.",
+
+  "meetings": [
+    { "key": "discovery", "title": "Discovery call", "meeting_type": "discovery",
+      "status": "completed", "occurred_at": "2026-07-28T14:00:00Z",
+      "transcript": "transcripts/01-discovery-2026-07-28.txt",
+      "expected_roster": [
+        { "raw_name": "Maya Chen",    "is_internal": true,  "resolves_to": null },
+        { "raw_name": "Priya Raman",  "is_internal": false, "resolves_to": "Priya Raman" },
+        { "raw_name": "Marcus Webb",  "is_internal": false, "resolves_to": "Marcus Webb" },
+        { "raw_name": "Tom Alvarez",  "is_internal": false, "resolves_to": null }
+      ] },
+    { "key": "security_review", "title": "Security review", "meeting_type": "security_review",
+      "status": "completed", "occurred_at": "2026-08-14T15:30:00Z",
+      "transcript": "transcripts/02-security-review-2026-08-14.txt",
+      "expected_roster": [
+        { "raw_name": "Priya Raman",  "is_internal": false, "resolves_to": "Priya Raman" },
+        { "raw_name": "Maya Chen",    "is_internal": true,  "resolves_to": null },
+        { "raw_name": "Marcus Webb",  "is_internal": false, "resolves_to": "Marcus Webb" },
+        { "raw_name": "Tom Alvarez",  "is_internal": false, "resolves_to": null }
+      ] },
+    { "key": "negotiation", "title": "Negotiation check-in", "meeting_type": "negotiation",
+      "status": "completed", "occurred_at": "2026-09-18T16:00:00Z",
+      "transcript": "transcripts/03-negotiation-checkin-2026-09-18.txt",
+      "expected_roster": [
+        { "raw_name": "Priya Raman",    "is_internal": false, "resolves_to": "Priya Raman" },
+        { "raw_name": "Maya Chen",      "is_internal": true,  "resolves_to": null },
+        { "raw_name": "Dana Whitfield", "is_internal": false, "resolves_to": null },
+        { "raw_name": "Tom Alvarez",    "is_internal": false, "resolves_to": null },
+        { "raw_name": "Marcus Webb",    "is_internal": false, "resolves_to": "Marcus Webb" }
+      ] }
+  ],
+
+  "planted_cases": {
+    "contradiction": {
+      "exercises": "Phase 6.2 supersession, Gate 2",
+      "detail": "Budget is stated as 'about a hundred and fifty thousand' with a board threshold in meeting 1, then 'two hundred and twenty thousand' approved by the CFO in meeting 3. The later fact must mark the earlier one superseded and keep both -- never overwrite."
+    },
+    "unfulfilled_commitment": {
+      "exercises": "Phase 6.1 reconciliation, RiskType.MISSED_COMMITMENT",
+      "detail": "Maya commits to sending the SOC 2 Type II 'by the seventh of August' in meeting 1. Meeting 2 opens with Priya saying it never arrived. A later commitment to send it 'this week' is made and, in meeting 3, implicitly satisfied -- the security review is complete."
+    },
+    "spoken_number_literals": {
+      "exercises": "Gate 0's literal rule",
+      "detail": "Every amount and date is spoken, never written as a numeral: 'a hundred and fifty thousand', 'a hundred and sixty-two thousand', 'two hundred and twenty thousand', 'the seventh of August', 'Friday the twentieth'. A claim asserting '$150,000' or '2026-08-07' has no literal match in any span, so the rule must reject it unless a resolved record value holds that form. This is the fixture's sharpest test."
+    },
+    "unresolved_attendee": {
+      "exercises": "Phase 2.3 entity resolution, the missing-stakeholder roll-up",
+      "detail": "Tom Alvarez speaks in all three meetings and is in no contact record. contact_id must stay NULL rather than being guessed onto Priya or Marcus."
+    },
+    "economic_buyer_arrives": {
+      "exercises": "RiskType.NO_ECONOMIC_BUYER and its resolution",
+      "detail": "No one who can approve spend attends meetings 1 or 2. Dana Whitfield (CFO) attends meeting 3 and approves. The risk should be open after meeting 2 and resolvable after meeting 3."
+    },
+    "competitor_mention": {
+      "exercises": "FactType.COMPETITOR, RiskType.COMPETITOR_PRESSURE",
+      "detail": "'Vanta Logs' is named once, in meeting 1, and dismissed in the same breath. A detector that reads a single dismissed mention as active competitive pressure is producing a false positive -- the expensive kind here."
+    },
+    "hard_dependency_objection": {
+      "exercises": "FactType.OBJECTION, RiskType.SECURITY_REVIEW_PENDING, Gate 2 staleness",
+      "detail": "Priya states in meeting 2 that security sign-off is a hard dependency, then states in meeting 3 that it is complete. An objection still rendered as open after meeting 3 means staleness is not working."
+    },
+    "decision_criteria": {
+      "exercises": "FactType.DECISION_CRITERIA, FactType.REQUIREMENT",
+      "detail": "Normalisation on ingest with no customer-side adapters; twelve month retention; SCIM 2.0; a load test at nine million events before signature; fixed-fee professional services. Several are stated as conditions of signing rather than as wishes."
+    }
+  }
+}

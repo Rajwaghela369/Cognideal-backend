@@ -1,0 +1,19 @@
+Priya Raman: Good news, finally. I took this to Dana last week and she's backing it.
+Maya Chen: That's great. Dana, thanks for joining — Maya Chen, I look after the Northwind account.
+Dana Whitfield: Dana Whitfield, I'm the CFO here. Priya made the case well. My position is that the audit finding is a bigger exposure than the price difference, so I've approved two hundred and twenty thousand for this, which gives you room for the full retention and the professional services to get it in before Q4.
+Maya Chen: That's a meaningful change from where we were in August. Thank you.
+Dana Whitfield: It's not generosity. If we fail the Q4 audit on the same finding twice, that's a disclosure item, and I'd rather spend the money than explain it.
+Tom Alvarez: For the record, at two hundred and twenty we're above the three-bid threshold, but a CFO approval with a documented risk rationale satisfies the exception. I've filed it.
+Maya Chen: So where does that leave the security review?
+Priya Raman: Done, as of Tuesday. Your security lead was genuinely helpful — we closed out eleven of the twelve questions in one session and the twelfth was a documentation gap on your side, not an architecture problem. My team has signed off.
+Maya Chen: And the load test, Marcus?
+Marcus Webb: Passed. p99 ingest was under four hundred milliseconds at nine million events, and the malformed timestamp case quarantined exactly as you described. I have no technical objection.
+Maya Chen: Then the only thing left is paper. What does your signature process look like from here?
+Dana Whitfield: Legal needs ten business days for a contract of this size. If you get them the paper this week, we sign by the second week of October.
+Priya Raman: Which is what I said in July, so let's not lose it now.
+Maya Chen: Understood. I'll have the order form and the MSA to your legal team by Friday the twentieth.
+Dana Whitfield: One condition. I want the professional services scope written as fixed fee, not time and materials. I'm not approving an open-ended number.
+Maya Chen: Fixed fee, I'll confirm it in the paper.
+Marcus Webb: And I want the sandbox left standing through the migration. My team will use it to rehearse the cutover.
+Maya Chen: I'll include that.
+Dana Whitfield: Then we're agreed in principle. Get us the paper.
