@@ -122,6 +122,23 @@ class RateLimitGovernor:
         elif drift < 0:
             await self._tokens.take(-drift)
 
+    async def take_request(self) -> None:
+        """Take one request from the request bucket only.
+
+        For the ``BaseRateLimiter`` adapter, which is never told how large the
+        request is -- see ``client.GovernorRateLimiter``. The token bucket is
+        deliberately untouched here: charging it a guess would corrupt the
+        accounting that :func:`client.structured` keeps accurately.
+        """
+        await self._requests.take(1)
+
+    def try_take_request(self) -> bool:
+        """Non-blocking variant: True if a request slot was free."""
+        if self._requests.level >= 1:
+            self._requests._level -= 1  # noqa: SLF001 -- same module's bucket
+            return True
+        return False
+
     @property
     def tokens_available(self) -> float:
         return self._tokens.level

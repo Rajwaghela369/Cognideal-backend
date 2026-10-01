@@ -278,6 +278,10 @@ class RiskType(str, Enum):
     COMPETITOR_PRESSURE = "competitor_pressure"
     MISSED_COMMITMENT = "missed_commitment"
     GONE_QUIET = "gone_quiet"
+    # For a risk the model names itself. `risk_key` carries the slug, and
+    # together they are the identity the partial unique index keys on. See
+    # migration 0013.
+    OTHER = "other"
 
 
 class DismissalReason(str, Enum):

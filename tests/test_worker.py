@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import select
 
 import worker
-from app.ai import pipeline
+from app.ai import graph
 from app.db.session import SessionLocal
 from app.models import Meeting
 from app.models.enums import AnalysisStatus, MeetingStatus
@@ -38,20 +38,22 @@ async def status_of(meeting_id):
 
 
 @pytest.fixture
-def broken_stage():
-    """Swap one stage for a failing one, then put it back."""
-    originals = list(pipeline.STAGES)
+def broken_stage(monkeypatch):
+    """Make one graph node raise.
 
-    def _break(index, critical):
-        async def boom(db, state):
-            raise RuntimeError("stage %d exploded" % index)
+    Patches the node the graph actually runs rather than a registry entry, so
+    the test exercises the path the worker takes. The critical/degradable
+    classification comes from `stage_registry`, which is the thing under test
+    -- it is not passed in.
+    """
 
-        pipeline.STAGES[index] = pipeline.Stage(
-            index=index, name=originals[index].name, critical=critical, run=boom
-        )
+    def _break(node_name):
+        async def boom(state, runtime):
+            raise RuntimeError("%s exploded" % node_name)
 
-    yield _break
-    pipeline.STAGES[:] = originals
+        monkeypatch.setitem(graph.NODES, node_name, graph.guarded(node_name)(boom))
+
+    return _break
 
 
 async def test_claims_and_completes(queued_meeting):
@@ -78,14 +80,45 @@ async def test_critical_stage_failure_records_failed(queued_meeting, broken_stag
     Recorded as `failed` rather than left `queued`, because a handled failure
     will not succeed on retry -- leaving it queued is a retry storm.
     """
-    broken_stage(2, critical=True)
+    broken_stage("parse_transcript")
     await worker.poll_queued_meetings()
     assert await status_of(queued_meeting) == AnalysisStatus.FAILED
 
 
-async def test_degradable_stage_failure_still_completes(queued_meeting, broken_stage):
-    """A failed summary must not discard facts that already landed."""
-    broken_stage(9, critical=False)
+def feed_the_branch(monkeypatch):
+    """Make `drop_unevidenced` report one surviving fact.
+
+    `anything_survived` routes to END when nothing survived -- correct, and it
+    means the degradable stages are unreachable for a meeting with no
+    transcript. Stands in for a real extraction so the test needs no model and
+    no fixture corpus.
+
+    Via `monkeypatch.setitem`, not a plain assignment: `graph.NODES` is module
+    state, and mutating it leaks into every test that runs afterwards.
+    """
+
+    async def one_survivor(state, runtime):
+        return {"surviving_facts": ["stand-in"], "written_fact_ids": ["stand-in"],
+                "rejected_facts": []}
+
+    monkeypatch.setitem(
+        graph.NODES, "drop_unevidenced", graph.guarded("drop_unevidenced")(one_survivor)
+    )
+
+
+async def test_degradable_stage_failure_still_completes(queued_meeting, broken_stage, monkeypatch):
+    """A failed summary must not discard facts that already landed.
+
+    The rule the first graph conversion dropped: a raw LangGraph node raising
+    propagates out of `ainvoke` and rolls back the transaction, verified facts
+    included. `graph.guarded` restores it, and this is the assertion that
+    would have caught its absence.
+    """
+    # The late stages are only reached when something survived Gate 0, so the
+    # branch has to be fed: a meeting with no transcript ends at
+    # `drop_unevidenced`. This stands in for a real extraction.
+    feed_the_branch(monkeypatch)
+    broken_stage("synthesize_summary")
     await worker.poll_queued_meetings()
     assert await status_of(queued_meeting) == AnalysisStatus.COMPLETE
 
@@ -101,3 +134,46 @@ async def test_skip_locked_prevents_double_claiming(queued_meeting):
         skipped = await worker._claim_queued_meeting(second)
         assert claimed is not None and claimed.id == queued_meeting
         assert skipped is None
+
+
+# --------------------------------------------------------------------------
+# the graph and the registry must not drift
+# --------------------------------------------------------------------------
+
+
+def test_every_declared_stage_is_a_node():
+    """`stage_registry.STAGES` is the executable copy of README section 4.
+
+    A stage declared there and missing from the graph is a stage that silently
+    never runs -- which is exactly the class of bug the conversion from the
+    sequential runner could have introduced.
+    """
+    from app.ai import stage_registry
+
+    nodes = {n for n in graph.build_graph().get_graph().nodes if not n.startswith("__")}
+    for stage in stage_registry.STAGES:
+        assert stage.name in nodes, "stage %d (%s) is not a node" % (stage.index, stage.name)
+
+
+def test_every_node_is_declared_or_structural():
+    """The reverse: a node nobody declared.
+
+    `plan_windows` is the one legitimate extra -- a LangGraph node returns
+    state while an edge returns destinations, so the fan-out needs an origin to
+    hang its conditional edge off.
+    """
+    from app.ai import stage_registry
+
+    declared = {stage.name for stage in stage_registry.STAGES} | {"plan_windows"}
+    nodes = {n for n in graph.build_graph().get_graph().nodes if not n.startswith("__")}
+    assert nodes - declared == set()
+
+
+def test_the_critical_split_is_stages_zero_to_four():
+    from app.ai import stage_registry
+
+    critical = [s.name for s in stage_registry.STAGES if s.critical]
+    assert critical == [s.name for s in stage_registry.STAGES[:5]]
+    assert stage_registry.LATE_STAGES == [
+        s.name for s in stage_registry.STAGES if not s.critical
+    ]

@@ -346,9 +346,14 @@ async def run(db: AsyncSession, deal: Deal) -> Dict[str, int]:
                 severity=finding.severity.value,
                 status=RiskStatus.OPEN.value,
                 confidence=1.0,  # a SQL rule is not a guess
+                # Empty, always: these four rules only ever produce the known
+                # types. The column exists for the AI detector's `other`
+                # (migration 0013), and it has to be named here because it is
+                # now part of the key this ON CONFLICT infers.
+                risk_key="",
             )
             .on_conflict_do_update(
-                index_elements=[Risk.deal_id, Risk.risk_type],
+                index_elements=[Risk.deal_id, Risk.risk_type, Risk.risk_key],
                 # text(), not Risk.status == "open". The index predicate is
                 # `WHERE (status = 'open'::risk_status)` -- a *typed* enum
                 # literal -- while the ORM comparison compiles to a bound
@@ -356,6 +361,11 @@ async def run(db: AsyncSession, deal: Deal) -> Dict[str, int]:
                 # typed predicate, so index inference fails with "no unique or
                 # exclusion constraint matching the ON CONFLICT specification".
                 # The predicate has to match what CREATE INDEX recorded.
+                #
+                # Re-keyed by 0013_open_risk_taxonomy: the index is now
+                # (deal_id, risk_type, risk_key). Leaving risk_key out of
+                # index_elements makes inference fail outright -- there is no
+                # longer a unique index on the pair alone.
                 index_where=text("status = 'open'::risk_status"),
                 set_={
                     "title": finding.title,

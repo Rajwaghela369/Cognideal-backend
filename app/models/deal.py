@@ -24,6 +24,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.db.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
+    Origin,
+    origin_enum,
     BuyingRole,
     DealStage,
     InfluenceLevel,
@@ -144,6 +146,11 @@ class DealContact(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Boolean, nullable=False, server_default="false"
     )
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Who set `buying_role` and the rest: a human, or a promoted `stakeholder`
+    # fact. The README carried this as a known gap. See migration 0011.
+    origin: Mapped[Origin] = mapped_column(
+        origin_enum, nullable=False, server_default=Origin.USER.value
+    )
 
 
 class DealStageHistory(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

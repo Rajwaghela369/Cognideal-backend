@@ -17,6 +17,7 @@ from app.api.v1.routes.deals import (
     commitments,
     core,
     documents,
+    facts,
     meetings,
     risks,
     stage_history,
@@ -34,3 +35,4 @@ router.include_router(attendees.participants)
 router.include_router(documents.router)
 router.include_router(risks.router)
 router.include_router(commitments.router)
+router.include_router(facts.router)

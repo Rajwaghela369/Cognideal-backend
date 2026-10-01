@@ -90,12 +90,47 @@ class Settings(BaseSettings):
 
     # Per-stage output ceilings. Deliberately not one number: an extraction
     # window returns many facts, a validator returns a verdict and a sentence.
-    ai_max_tokens_extract: int = 8192
+    #
+    # **Each must leave room for its own input inside the TPM ceiling below.**
+    # These were first sized against the published 250K TPM figure and left
+    # unchanged when that was corrected to 8,000 -- at which point a cap of
+    # 8192 was 102% of the entire per-minute budget, so a single request could
+    # never fit in a fresh minute. Observed output: extraction 3.1-4.3K,
+    # detection ~3K, a verdict ~200.
+    ai_max_tokens_extract: int = 6144
     ai_max_tokens_validate: int = 1024
-    ai_max_tokens_detect: int = 8192
-    ai_max_tokens_synthesize: int = 4096
-    ai_max_tokens_chat: int = 8192
-    ai_max_tokens_default: int = 4096
+    ai_max_tokens_detect: int = 6144
+    ai_max_tokens_synthesize: int = 2048
+    ai_max_tokens_chat: int = 4096
+    ai_max_tokens_default: int = 2048
+
+    # --- Extraction ---
+    # Chunks per extraction window. Small on purpose: instruction-following on
+    # open models degrades with input length long before the context window
+    # runs out, and Groq is fast enough that more small calls beat fewer large
+    # ones in wall-clock. Windows do not overlap -- the chunks inside them
+    # already do, so coverage is continuous without extracting the same
+    # exchange twice.
+    extract_window_chunks: int = 4
+
+    # --- Roster and name resolution ---
+    # Who we are. There is no users table (no auth in the MVP), so nothing else
+    # can tell the roster parser that this speaker is us and the rest are the
+    # customer. Inferring it from context -- whoever makes commitments -- would
+    # misfile the first customer who promises something.
+    ae_display_name: str = "Maya Chen"
+
+    # Auto-link a transcript speaker to a contact only at or above this
+    # trigram similarity, and only when the runner-up is at least
+    # roster_link_margin behind. A wrong contact_id silently corrupts every
+    # attendance-based risk, and an unresolved attendee is itself the
+    # missing-stakeholder signal -- so NULL is the safe failure.
+    roster_link_threshold: float = 0.75
+    roster_link_margin: float = 0.15
+    # Below the link threshold but above this, the name is a *candidate* and
+    # goes to the model tiebreak. Below it, no model is called at all: a score
+    # this low means nobody we know, which is an answer rather than a doubt.
+    roster_candidate_threshold: float = 0.40
 
     # --- Worker ---
     # How long to idle when no poll query found work. Low enough that a queued
@@ -104,12 +139,19 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 2.0
 
     # --- Rate-limit governor ---
-    # Groq's Developer plan allows 250K TPM / 1K RPM per model. The parallel
-    # extraction fan-out is what reaches that first, so the ceiling is enforced
-    # client-side rather than discovered as a 429 storm.
-    groq_max_concurrency: int = 4
-    groq_tokens_per_minute: int = 250_000
-    groq_requests_per_minute: int = 1000
+    # TIER-DEPENDENT, and getting it wrong defeats the governor entirely. The
+    # published table (console.groq.com/docs/models) quotes the *Developer*
+    # plan at 250K TPM; the free `on_demand` tier is **8,000 TPM** for
+    # openai/gpt-oss-120b. Set 31x too high the bucket never throttles, and the
+    # first symptom is a 429 storm part-way through a pipeline run -- precisely
+    # what the governor exists to prevent.
+    #
+    # The authoritative number is on every response as `x-ratelimit-limit-tokens`.
+    # Reading it from there would remove this setting, and is the obvious
+    # improvement.
+    groq_max_concurrency: int = 2
+    groq_tokens_per_minute: int = 8_000
+    groq_requests_per_minute: int = 30
     # A single pipeline run may not spend more than this, whatever it thinks it
     # needs. Bounds the cost of a prompt bug to one run.
     ai_token_ceiling_per_run: int = 200_000

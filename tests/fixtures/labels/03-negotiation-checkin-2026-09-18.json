@@ -55,8 +55,8 @@
       },
       "_note": "An objection still rendered as open after this means Gate 2 staleness is not working.",
       "chunk_index": 1,
-      "char_start": 442,
-      "char_end": 465
+      "char_start": 461,
+      "char_end": 484
     },
     {
       "id": "n4",
@@ -68,8 +68,8 @@
         "criterion": "fixed-fee professional services"
       },
       "chunk_index": 2,
-      "char_start": 430,
-      "char_end": 514
+      "char_start": 355,
+      "char_end": 439
     },
     {
       "id": "n5",
@@ -82,9 +82,10 @@
         "what": "signature",
         "lead_time": "ten business days"
       },
-      "chunk_index": 2,
-      "char_start": 187,
-      "char_end": 224
+      "chunk_index": 1,
+      "char_start": 929,
+      "char_end": 966,
+      "appears_in_chunks": 2
     },
     {
       "id": "n6",
@@ -99,8 +100,8 @@
         "what": "order form and MSA"
       },
       "chunk_index": 2,
-      "char_start": 318,
-      "char_end": 398
+      "char_start": 243,
+      "char_end": 323
     },
     {
       "id": "n7",
@@ -112,8 +113,8 @@
         "what": "sandbox retained through migration"
       },
       "chunk_index": 2,
-      "char_start": 624,
-      "char_end": 679
+      "char_start": 549,
+      "char_end": 604
     },
     {
       "id": "n8",
@@ -129,8 +130,8 @@
         "satisfies": "d9"
       },
       "chunk_index": 1,
-      "char_start": 525,
-      "char_end": 594
+      "char_start": 544,
+      "char_end": 613
     }
   ],
   "expected_risks_after": [

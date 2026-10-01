@@ -14,9 +14,27 @@ import uuid
 import pytest
 import pytest_asyncio
 
+from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.models import Account, Deal
 from app.models.enums import DealStage
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch):
+    """No test may call a provider. Enforced, not assumed.
+
+    Without this the suite's behaviour depends on whatever ``AI_ENABLED`` the
+    developer happens to have in ``backend/.env`` -- and when it is on, pytest
+    silently starts spending money and needing the network. One test already
+    relied on the flag being off and passed for the wrong reason until the key
+    was configured.
+
+    Tests that need a model stub ``client.structured`` directly, which bypasses
+    this gate because it never reaches ``chat_model``. The live checks live in
+    ``verify_ai_*.py`` and are run by hand.
+    """
+    monkeypatch.setattr(settings, "ai_enabled", False)
 
 
 @pytest_asyncio.fixture(autouse=True)

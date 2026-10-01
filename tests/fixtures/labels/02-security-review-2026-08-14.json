@@ -32,8 +32,9 @@
         "exercises": "security_review_pending"
       },
       "chunk_index": 2,
-      "char_start": 210,
-      "char_end": 303
+      "char_start": 664,
+      "char_end": 757,
+      "appears_in_chunks": 2
     },
     {
       "id": "s3",
@@ -44,9 +45,9 @@
       "payload": {
         "what": "SCIM 2.0 provisioning"
       },
-      "chunk_index": 1,
-      "char_start": 621,
-      "char_end": 676
+      "chunk_index": 2,
+      "char_start": 346,
+      "char_end": 401
     },
     {
       "id": "s4",
@@ -59,9 +60,9 @@
         "currency": null,
         "basis": "proposal"
       },
-      "chunk_index": 2,
-      "char_start": 745,
-      "char_end": 815
+      "chunk_index": 3,
+      "char_start": 638,
+      "char_end": 708
     },
     {
       "id": "s5",
@@ -106,9 +107,9 @@
         "criterion": "competitive process above threshold",
         "waivable_by_procurement": false
       },
-      "chunk_index": 2,
-      "char_start": 864,
-      "char_end": 916,
+      "chunk_index": 3,
+      "char_start": 757,
+      "char_end": 809,
       "appears_in_chunks": 2
     }
   ],

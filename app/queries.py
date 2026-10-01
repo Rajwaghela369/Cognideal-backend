@@ -13,10 +13,10 @@ either is the kind of drift nobody notices until the numbers differ between
 two screens.
 """
 
-from sqlalchemy import Integer, and_, case, false, func, select
+from sqlalchemy import Integer, and_, case, false, func, or_, select
 
-from app.models import Commitment, Deal, DealStageHistory, Risk, Task
-from app.models.enums import DealStage
+from app.models import ClaimValidation, Commitment, Deal, DealStageHistory, Risk, Task
+from app.models.enums import ClaimType, Verdict, DealStage
 
 CLOSED_STAGES = ("closed_won", "closed_lost")
 
@@ -169,3 +169,40 @@ COMMITMENT_OVERDUE = and_(
 # actually take to move from each stage into negotiation, once the seeder
 # exists.
 CLOSE_DATE_WARNING_DAYS = 21
+
+
+# ---------------------------------------------------------------------------
+# Gate 1 quarantine -- task 4.3
+# ---------------------------------------------------------------------------
+#
+# A claim whose newest verdict is `contradicted` or `unsupported` must never
+# render: the first means the evidence says the opposite, the second that the
+# citation does not address the claim at all. `partial` *does* render, with a
+# caution badge -- a claim where one clause is evidenced and another is not is
+# still worth a human's eye.
+#
+# Defined here rather than in a route because it is a product rule that holds
+# for every reader. A route that forgets it shows a quarantined claim as fact,
+# and nothing in the response would reveal that.
+QUARANTINED_VERDICTS = (Verdict.CONTRADICTED.value, Verdict.UNSUPPORTED.value)
+
+
+def quarantine_filter(claim_type: ClaimType, claim_id_column):
+    """A NOT EXISTS clause excluding claims whose newest verdict quarantines them.
+
+    Correlated rather than joined so it composes with any query over any of the
+    five claim tables, and so a claim with no validation yet is *included* --
+    unvalidated is not the same as failed, and Gate 0 already rejected the
+    claims that had no business existing.
+    """
+    newest = (
+        select(ClaimValidation.verdict)
+        .where(
+            ClaimValidation.claim_type == claim_type,
+            ClaimValidation.claim_id == claim_id_column,
+        )
+        .order_by(ClaimValidation.checked_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    return or_(newest.is_(None), newest.notin_(QUARANTINED_VERDICTS))

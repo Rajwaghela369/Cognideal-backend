@@ -38,7 +38,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import RunBudget
-from app.ai.pipeline import CriticalStageFailed, run_meeting_analysis
+from app.ai.graph import run_meeting_analysis
+from app.ai.stage_registry import CriticalStageFailed
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import Meeting
@@ -69,11 +70,9 @@ async def _record_meeting_failure(meeting_id, error: str) -> None:
         await db.execute(
             update(Meeting)
             .where(Meeting.id == meeting_id)
-            .values(analysis_status=AnalysisStatus.FAILED)
+            .values(analysis_status=AnalysisStatus.FAILED, analysis_error=error)
         )
         await db.commit()
-    # meetings has no analysis_error column, so the reason lives in the log.
-    # Worth adding one in migration 0010 -- noted in docs/ai/TASKS.md.
     logger.error("meeting.analysis_failed meeting=%s error=%s", meeting_id, error)
 
 
@@ -86,8 +85,9 @@ async def poll_queued_meetings() -> bool:
 
         meeting_id = meeting.id
         logger.info("meeting.analysis_started meeting=%s", meeting_id)
+        budget = RunBudget()
         try:
-            state = await run_meeting_analysis(db, meeting, RunBudget())
+            state = await run_meeting_analysis(db, meeting, budget)
         except CriticalStageFailed as exc:
             await db.rollback()
             await _record_meeting_failure(meeting_id, str(exc))
@@ -99,16 +99,24 @@ async def poll_queued_meetings() -> bool:
             logger.exception("meeting.analysis_crashed meeting=%s error=%r", meeting_id, exc)
             return True
 
-        meeting.analysis_status = AnalysisStatus.COMPLETE
-        # Stage 11 (`finalize`) owns analyzed_at once it exists; until then the
-        # worker stamps it so the Analyzer screen has a completion time.
-        if meeting.analyzed_at is None:
+        # `analysis_status` and `analyzed_at` are stage 11's (`finalize`), so
+        # that one writer owns them. This is the floor underneath it, not a
+        # second writer: `finalize` is a *degradable* stage, so if it raises,
+        # `guarded` swallows it -- and a run that never set a status is a row
+        # the next poll finds `queued` and re-runs forever.
+        if meeting.analysis_status != AnalysisStatus.COMPLETE:
+            logger.warning(
+                "meeting.finalize_missed meeting=%s status=%s -- completing anyway",
+                meeting_id, meeting.analysis_status,
+            )
+            meeting.analysis_status = AnalysisStatus.COMPLETE
             meeting.analyzed_at = func.now()
         await db.commit()
 
         logger.info(
-            "meeting.analysis_complete meeting=%s tokens=%d degraded=%s",
-            meeting_id, state.budget.spent, sorted(state.stage_errors) or "none",
+            "meeting.analysis_complete meeting=%s tokens=%d facts=%d degraded=%s",
+            meeting_id, budget.spent, len(state.get("written_fact_ids") or []),
+            sorted(state.get("stage_errors") or {}) or "none",
         )
         return True
 

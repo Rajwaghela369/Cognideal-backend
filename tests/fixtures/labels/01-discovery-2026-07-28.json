@@ -26,7 +26,8 @@
       },
       "chunk_index": 0,
       "char_start": 795,
-      "char_end": 876
+      "char_end": 876,
+      "appears_in_chunks": 2
     },
     {
       "id": "d3",
@@ -41,8 +42,9 @@
       },
       "_note": "The amount is spoken, never numeric. A claim asserting \"$150,000\" has no literal match here and Gate 0's literal rule must reject it.",
       "chunk_index": 1,
-      "char_start": 594,
-      "char_end": 675
+      "char_start": 750,
+      "char_end": 831,
+      "appears_in_chunks": 2
     },
     {
       "id": "d4",
@@ -55,8 +57,9 @@
         "cadence": "quarterly"
       },
       "chunk_index": 1,
-      "char_start": 676,
-      "char_end": 772
+      "char_start": 832,
+      "char_end": 928,
+      "appears_in_chunks": 2
     },
     {
       "id": "d5",
@@ -68,8 +71,9 @@
         "criterion": "three competitive bids above threshold"
       },
       "chunk_index": 2,
-      "char_start": 650,
-      "char_end": 695
+      "char_start": 761,
+      "char_end": 806,
+      "appears_in_chunks": 2
     },
     {
       "id": "d6",
@@ -82,9 +86,9 @@
         "status": "dismissed_in_same_breath"
       },
       "_note": "Named once and rejected immediately. A detector reading this as active competitive pressure is a false positive.",
-      "chunk_index": 2,
-      "char_start": 754,
-      "char_end": 790
+      "chunk_index": 3,
+      "char_start": 403,
+      "char_end": 439
     },
     {
       "id": "d7",
@@ -97,8 +101,8 @@
         "what": "signature"
       },
       "chunk_index": 3,
-      "char_start": 221,
-      "char_end": 266
+      "char_start": 708,
+      "char_end": 753
     },
     {
       "id": "d8",
@@ -116,9 +120,9 @@
         "unfulfilled_evidence": "s1",
         "exercises": "missed_commitment"
       },
-      "chunk_index": 3,
-      "char_start": 589,
-      "char_end": 634
+      "chunk_index": 4,
+      "char_start": 321,
+      "char_end": 366
     },
     {
       "id": "d9",
@@ -129,9 +133,9 @@
       "payload": {
         "criterion": "load test on customer data before signature"
       },
-      "chunk_index": 3,
-      "char_start": 761,
-      "char_end": 840
+      "chunk_index": 4,
+      "char_start": 493,
+      "char_end": 572
     },
     {
       "id": "d10",
@@ -146,8 +150,9 @@
       },
       "_note": "Not in `contacts`. Entity resolution must leave contact_id NULL rather than guessing.",
       "chunk_index": 2,
-      "char_start": 379,
-      "char_end": 396
+      "char_start": 490,
+      "char_end": 507,
+      "appears_in_chunks": 2
     },
     {
       "id": "d11",
@@ -160,8 +165,8 @@
         "platform": "Marcus Webb"
       },
       "chunk_index": 1,
-      "char_start": 379,
-      "char_end": 434
+      "char_start": 535,
+      "char_end": 590
     }
   ],
   "expected_risks_after": [

@@ -13,13 +13,20 @@ module is the one place that knows how.
 """
 
 import uuid
+from datetime import datetime
 from typing import Iterable, List, Optional, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ClaimEvidence, ClaimValidation, Evidence
-from app.models.enums import ClaimType, SourceKind
+from app.models.enums import (
+    ClaimType,
+    SourceKind,
+    ValidationMethod,
+    Verdict,
+    VerificationStatus,
+)
 
 
 async def attach_evidence(
@@ -34,8 +41,17 @@ async def attach_evidence(
     document_id: Optional[uuid.UUID] = None,
     chunk_id: Optional[uuid.UUID] = None,
     relevance: Optional[float] = None,
+    char_start: Optional[int] = None,
+    char_end: Optional[int] = None,
+    speaker: Optional[str] = None,
+    occurred_at: Optional[datetime] = None,
+    verification_status: Optional[VerificationStatus] = None,
 ) -> Evidence:
     """Record one locatable source for one claim.
+
+    ``char_start``/``char_end`` are required in practice for a document span
+    even though the column allows NULL: Gate 0 checks the snippet appears at
+    exactly those offsets, and a span with no offsets can never verify.
 
     ``snippet`` must be the **literal value**, not a description of it. Gate 0
     re-resolves ``record_ref`` and checks the field still holds exactly this
@@ -50,6 +66,10 @@ async def attach_evidence(
         chunk_id=chunk_id,
         record_ref=record_ref,
         snippet=snippet,
+        char_start=char_start,
+        char_end=char_end,
+        speaker=speaker,
+        occurred_at=occurred_at,
     )
     db.add(evidence)
     await db.flush()
@@ -60,9 +80,84 @@ async def attach_evidence(
             claim_id=claim_id,
             evidence_id=evidence.id,
             relevance=relevance,
+            # Gate 0's outcome, supplied by the caller that ran it. Left at the
+            # column default (`unverified`) when absent rather than guessed:
+            # a link claiming to be verified when nothing checked it is worse
+            # than one that admits it has not been.
+            **({"verification_status": verification_status,
+                "verified_at": func.now()} if verification_status else {}),
         )
     )
     return evidence
+
+
+async def record_validation(
+    db: AsyncSession,
+    *,
+    claim_type: ClaimType,
+    claim_id: uuid.UUID,
+    verdict: Verdict,
+    method: ValidationMethod,
+    rationale: Optional[str] = None,
+    model: Optional[str] = None,
+    validator_version: Optional[str] = None,
+) -> ClaimValidation:
+    """Append one Gate 1 outcome. Never updates.
+
+    Append-only is the design: one row per validation *run*, so the history is
+    legible after a prompt change. ``validator_version`` is why that matters --
+    every verdict older than the current version came from a different judge,
+    and without the column the coverage metric silently averages two
+    populations (docs/schema/README.md section 5).
+    """
+    validation = ClaimValidation(
+        claim_type=claim_type,
+        claim_id=claim_id,
+        verdict=verdict,
+        method=method,
+        rationale=rationale,
+        model=model,
+        validator_version=validator_version,
+    )
+    db.add(validation)
+    await db.flush()
+    return validation
+
+
+async def latest_verdicts(
+    db: AsyncSession, claim_type: ClaimType, claim_ids: Sequence[uuid.UUID]
+) -> dict:
+    """The newest verdict per claim: ``{claim_id: Verdict}``.
+
+    Newest by ``checked_at``, which `ix_claim_validations_claim_checked_at`
+    orders for. Claims with no validation are absent rather than defaulted --
+    "not yet validated" is a different state from any verdict, and collapsing
+    them would let an unchecked claim inherit a pass.
+    """
+    if not claim_ids:
+        return {}
+
+    ranked = (
+        select(
+            ClaimValidation.claim_id,
+            ClaimValidation.verdict,
+            func.row_number()
+            .over(
+                partition_by=ClaimValidation.claim_id,
+                order_by=ClaimValidation.checked_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(
+            ClaimValidation.claim_type == claim_type,
+            ClaimValidation.claim_id.in_(claim_ids),
+        )
+        .subquery()
+    )
+    rows = (
+        await db.execute(select(ranked.c.claim_id, ranked.c.verdict).where(ranked.c.rank == 1))
+    ).all()
+    return {row[0]: row[1] for row in rows}
 
 
 async def delete_claim_links(

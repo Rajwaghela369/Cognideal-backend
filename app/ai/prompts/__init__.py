@@ -87,4 +87,11 @@ def all_prompts() -> Sequence[Prompt]:
 # imported here. Listed explicitly rather than auto-discovered by walking the
 # package: an import that only happens when something else happens to import it
 # is a prompt that is missing from `all_prompts()` for reasons nobody can see.
+from app.ai.prompts import detect as _detect  # noqa: E402,F401
+from app.ai.prompts import extract as _extract  # noqa: E402,F401
+from app.ai.prompts import reconcile as _reconcile  # noqa: E402,F401
+from app.ai.prompts import roster_tiebreak as _roster_tiebreak  # noqa: E402,F401
+from app.ai.prompts import sentiment as _sentiment  # noqa: E402,F401
 from app.ai.prompts import smoke as _smoke  # noqa: E402,F401
+from app.ai.prompts import synthesize as _synthesize  # noqa: E402,F401
+from app.ai.prompts import validate as _validate  # noqa: E402,F401

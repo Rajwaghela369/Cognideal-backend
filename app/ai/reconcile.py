@@ -1,0 +1,202 @@
+"""Cross-meeting comparison: commitments kept, and facts superseded. Phase 6.
+
+Both tasks here look backwards, which makes them different from extraction:
+they compare what this call said against what the deal already holds. Both
+answer with an **index into a list we supplied**, never an id -- the dossier's
+handle pattern, so an impossible answer is detectable.
+
+Neither writes the thing it concludes.
+
+*Reconciliation* produces a **proposal**, not a status change. Closing a
+commitment is a statement that someone did what they said, and
+``risk -> recommendation -> [human accepts] -> task`` is the product: the model
+may notice, a person decides. A model that silently closed commitments would
+make ``missed_commitment`` unreliable in the one direction that matters.
+
+*Supersession* does write ``status='superseded'`` on the older fact, and that
+is deliberate rather than inconsistent: it hides nothing and deletes nothing.
+Both rows stay, both keep their evidence, and the schema is explicit that
+contradiction must never overwrite (docs/schema/README.md section 5).
+"""
+
+import logging
+import uuid
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.ai import client
+from app.ai.prompts import get as get_prompt
+from app.models import Commitment, ExtractedFact
+from app.models.enums import CommitmentStatus, FactStatus
+
+logger = logging.getLogger("dealpilot.ai.reconcile")
+
+
+class Choice(BaseModel):
+    """An index into a numbered list, or null. Shared by both tasks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    choice: Optional[int] = Field(description="The item's number, or null if none")
+    reasoning: str = Field(description="One sentence")
+
+
+def _numbered(items: Sequence[str]) -> str:
+    return "\n".join("%d. %s" % (i, text) for i, text in enumerate(items, start=1))
+
+
+def _validated_choice(answer: Choice, size: int, what: str) -> Optional[int]:
+    """Turn the model's number into a zero-based index, or None.
+
+    Out of range is treated as "none" rather than clamped. A model that cannot
+    count is not one to trust with the decision, and this is the whole reason
+    the answer is an integer against a list we supplied.
+    """
+    if answer.choice is None:
+        return None
+    if not 1 <= answer.choice <= size:
+        logger.warning("%s.out_of_range choice=%s size=%d", what, answer.choice, size)
+        return None
+    return answer.choice - 1
+
+
+async def reconcile_commitments(
+    db: AsyncSession,
+    deal_id: uuid.UUID,
+    facts: Sequence[Any],
+    *,
+    budget: Optional[client.RunBudget] = None,
+) -> List[Tuple[uuid.UUID, str]]:
+    """Which open commitments do these facts show satisfied?
+
+    Returns ``[(commitment_id, why)]`` -- proposals for a human, written by the
+    caller as recommendations. One call for the whole fact set rather than one
+    per commitment: the comparison needs to see them together, and a per-pair
+    loop would cost a call per commitment for a worse answer.
+    """
+    if not facts:
+        return []
+
+    open_commitments = list(
+        (
+            await db.execute(
+                select(Commitment)
+                .where(
+                    Commitment.deal_id == deal_id,
+                    Commitment.status == CommitmentStatus.PENDING,
+                )
+                .order_by(Commitment.due_date.nulls_last())
+            )
+        ).scalars()
+    )
+    if not open_commitments:
+        return []
+
+    prompt = get_prompt("reconcile")
+    answer, _run = await client.structured(
+        Choice,
+        prompt.messages(
+            commitments=_numbered([
+                "%s (owner: %s, due %s)" % (c.description, c.owner_name or c.owner_side, c.due_date)
+                for c in open_commitments
+            ]),
+            facts=_numbered(["[%s] %s" % (f.fact_type, f.content) for f in facts]),
+        ),
+        task="validate",
+        prompt_version=prompt.version,
+        reasoning_effort="medium",
+        budget=budget,
+    )
+
+    index = _validated_choice(answer, len(open_commitments), "reconcile")
+    if index is None:
+        logger.info("reconcile.none deal=%s why=%s", deal_id, answer.reasoning[:70])
+        return []
+
+    commitment = open_commitments[index]
+    logger.info(
+        "reconcile.proposed deal=%s commitment=%s why=%s",
+        deal_id, commitment.id, answer.reasoning[:70],
+    )
+    return [(commitment.id, answer.reasoning.strip())]
+
+
+async def supersede_facts(
+    db: AsyncSession,
+    deal_id: uuid.UUID,
+    new_facts: Sequence[Any],
+    *,
+    budget: Optional[client.RunBudget] = None,
+) -> List[Tuple[uuid.UUID, uuid.UUID]]:
+    """Mark older facts superseded where a new one replaces them.
+
+    Returns ``[(old_fact_id, new_fact_id)]``. Compares only within a
+    ``fact_type`` -- a budget fact cannot supersede a deadline -- and only
+    against **accepted** facts, because a `pending` fact is itself unreviewed
+    and superseding one proposal with another would decide nothing.
+    """
+    if not new_facts:
+        return []
+
+    superseded: List[Tuple[uuid.UUID, uuid.UUID]] = []
+    prompt = get_prompt("supersede")
+
+    by_type: Dict[str, List[Any]] = {}
+    for fact in new_facts:
+        by_type.setdefault(fact.fact_type, []).append(fact)
+
+    for fact_type, candidates in by_type.items():
+        existing = list(
+            (
+                await db.execute(
+                    select(ExtractedFact)
+                    .where(
+                        ExtractedFact.deal_id == deal_id,
+                        ExtractedFact.fact_type == fact_type,
+                        ExtractedFact.status == FactStatus.ACCEPTED,
+                        ExtractedFact.id.notin_([f.id for f in candidates]),
+                    )
+                    .order_by(ExtractedFact.extracted_at.desc())
+                    .limit(10)
+                )
+            ).scalars()
+        )
+        if not existing:
+            continue
+
+        for new_fact in candidates:
+            answer, _run = await client.structured(
+                Choice,
+                prompt.messages(
+                    fact_type=fact_type,
+                    new_fact=new_fact.content,
+                    existing=_numbered([f.content for f in existing]),
+                ),
+                task="validate",
+                prompt_version=prompt.version,
+                reasoning_effort="medium",
+                budget=budget,
+            )
+            index = _validated_choice(answer, len(existing), "supersede")
+            if index is None:
+                continue
+
+            old = existing[index]
+            # Marked, never overwritten or deleted: both rows stay, both keep
+            # their evidence. "Do not overwrite -- mark the old claim
+            # superseded, link the new evidence, keep both."
+            old.status = FactStatus.SUPERSEDED
+            old.reviewed_at = func.now()
+            superseded.append((old.id, new_fact.id))
+            logger.info(
+                "supersede.marked old=%s new=%s type=%s why=%s",
+                old.id, new_fact.id, fact_type, answer.reasoning[:70],
+            )
+
+    if superseded:
+        await db.flush()
+    return superseded

@@ -164,6 +164,11 @@ class Risk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     risk_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Empty string for the ten known types, a canonicalised slug for `other`.
+    # Empty rather than NULL: a NULL in a unique index is distinct from every
+    # other NULL, which would let two open rows of one type coexist and quietly
+    # remove the guarantee. See migration 0013.
+    risk_key: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     severity: Mapped[Severity] = mapped_column(severity_enum, nullable=False)
@@ -174,6 +179,8 @@ class Risk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         origin_enum, nullable=False, server_default=Origin.AI.value
     )
     confidence: Mapped[Optional[float]] = mapped_column(Numeric(3, 2), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    detector_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     first_detected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -253,6 +260,8 @@ class Recommendation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     origin: Mapped[Origin] = mapped_column(
         origin_enum, nullable=False, server_default=Origin.AI.value
     )
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    detector_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

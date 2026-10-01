@@ -106,11 +106,11 @@ async def main():
 import asyncio, os, sys, logging
 sys.path.insert(0, '.')
 logging.disable(logging.CRITICAL)
-from app.ai import pipeline
+from app.ai import graph
 import worker
-async def hang(db, state):
+async def hang(state, runtime):
     await asyncio.sleep(30)
-pipeline.STAGES[2] = pipeline.Stage(index=2, name='extract_facts', critical=True, run=hang)
+graph.NODES["extract_window"] = graph.guarded("extract_window")(hang)
 async def go():
     asyncio.ensure_future(worker.poll_queued_meetings())
     await asyncio.sleep(3)

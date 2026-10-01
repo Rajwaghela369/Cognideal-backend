@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -22,10 +23,12 @@ from app.models.enums import (
     AnalysisStatus,
     MeetingStatus,
     MeetingType,
+    Origin,
     Sentiment,
     analysis_status_enum,
     check_in,
     meeting_status_enum,
+    origin_enum,
     sentiment_enum,
 )
 
@@ -81,6 +84,17 @@ class Meeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     analyzed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Who wrote `summary` and `sentiment`, and what it cost. Scoped to the
+    # fields the pipeline owns rather than the whole row -- the title and the
+    # timestamps are the user's. See migration 0011.
+    analysis_origin: Mapped[Optional[Origin]] = mapped_column(origin_enum, nullable=True)
+    analysis_confidence: Mapped[Optional[float]] = mapped_column(
+        Numeric(3, 2), nullable=True
+    )
+    analysis_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Why a run failed. Without it `analysis_status='failed'` can say that it
+    # failed but not why, which is not much use to the person looking at it.
+    analysis_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class MeetingAttendee(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

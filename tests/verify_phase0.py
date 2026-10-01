@@ -23,7 +23,7 @@ from app.models import Account, Deal, Meeting
 from app.models.enums import AnalysisStatus, DealStage, MeetingStatus
 from app.services import activity
 import worker
-from app.ai import pipeline
+from app.ai import graph
 
 RESULTS = []
 def check(label, ok, detail=""):
@@ -62,30 +62,26 @@ async def main():
 
     print("\n0.5  worker: a critical stage failure records `failed`, not a retry loop")
     _, _, m2 = await seed()
-    original = pipeline.STAGES[2]
-    async def boom(db, state):
+        async def boom(state, runtime):
         raise RuntimeError("extractor exploded")
-    pipeline.STAGES[2] = pipeline.Stage(index=2, name="extract_facts", critical=True, run=boom)
+    graph.NODES["extract_window"] = graph.guarded("extract_window")(boom)
     try:
         await worker.poll_queued_meetings()
         st2, _ = await status_of(m2)
         check("critical stage -> failed", st2 == AnalysisStatus.FAILED, "status=%s" % st2)
         check("not left queued (no retry storm)", st2 != AnalysisStatus.QUEUED)
     finally:
-        pipeline.STAGES[2] = original
 
     print("\n0.5  worker: a degradable stage failure still completes")
     _, _, m3 = await seed()
-    original9 = pipeline.STAGES[9]
-    async def boom9(db, state):
+        async def boom9(state, runtime):
         raise RuntimeError("summary exploded")
-    pipeline.STAGES[9] = pipeline.Stage(index=9, name="synthesize_summary", critical=False, run=boom9)
+    graph.NODES["synthesize_summary"] = graph.guarded("synthesize_summary")(boom9)
     try:
         await worker.poll_queued_meetings()
         st3, _ = await status_of(m3)
         check("degradable stage -> still complete", st3 == AnalysisStatus.COMPLETE, "status=%s" % st3)
     finally:
-        pipeline.STAGES[9] = original9
 
     print("\n0.5  worker: SKIP LOCKED -- two claimants never get the same row")
     _, _, m4 = await seed()
