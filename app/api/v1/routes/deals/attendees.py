@@ -32,6 +32,7 @@ from app.schemas.v1.deal.meeting import (
     ParticipantFilters,
 )
 from app.services import meeting as meeting_service
+from app.services import analysis as analysis_service
 
 router = APIRouter(
     prefix="/deals/{deal_id}/meetings/{meeting_id}/attendees", tags=["attendees"]
@@ -115,6 +116,15 @@ async def add_attendee(
     attendee = MeetingAttendee(meeting_id=meeting_id, **body.model_dump())
     db.add(attendee)
     try:
+        await db.flush()
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "meeting.attendee_added",
+            table="meeting_attendees",
+            row_id=attendee.id,
+            fields=("raw_name", "contact_id", "is_internal", "attended"),
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -151,6 +161,14 @@ async def update_attendee(
 
     meeting_id = meeting.id
     try:
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "meeting.attendee_updated",
+            table="meeting_attendees",
+            row_id=attendee.id,
+            fields=changes.keys(),
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -164,12 +182,21 @@ async def update_attendee(
 @router.delete("/{attendee_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_attendee(
     attendee_id: uuid.UUID,
+    deal: Deal = Depends(get_deal_or_404),
     meeting: Meeting = Depends(get_meeting),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Removes the attendance record, never the contact."""
     attendee = await meeting_service.get_attendee_or_404(db, meeting.id, attendee_id)
     await db.delete(attendee)
+    await analysis_service.record_change(
+        db,
+        deal.id,
+        "meeting.attendee_deleted",
+        table="meeting_attendees",
+        row_id=attendee_id,
+        fields=("raw_name", "contact_id", "is_internal", "attended"),
+    )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -228,6 +255,14 @@ async def resolve_attendee(
 
     meeting_id = meeting.id
     try:
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "meeting.attendee_resolved",
+            table="meeting_attendees",
+            row_id=attendee.id,
+            fields=("contact_id",),
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()

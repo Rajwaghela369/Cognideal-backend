@@ -28,6 +28,36 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+#: Tables in the database that this project does not own, and must never
+#: autogenerate a drop for.
+#:
+#: ``langgraph-checkpoint-postgres`` creates and migrates these itself, through
+#: ``AsyncPostgresSaver.setup()`` (see ``app/ai/checkpointer.py``). They are not
+#: in ``Base.metadata``, so without this filter ``alembic revision
+#: --autogenerate`` proposes ``op.drop_table`` for all four -- verified: it
+#: does -- and the first person to accept a generated revision deletes every
+#: chat session's memory.
+FOREIGN_TABLES = {
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_writes",
+    "checkpoint_migrations",
+}
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    """Keep foreign tables out of autogenerate, in both directions.
+
+    Filters indexes as well as tables: an index is a separate object to
+    autogenerate, and dropping ``checkpoints_thread_id_idx`` while leaving the
+    table alone would be its own kind of broken.
+    """
+    if type_ == "table" and name in FOREIGN_TABLES:
+        return False
+    if type_ == "index" and getattr(obj, "table", None) is not None:
+        return obj.table.name not in FOREIGN_TABLES
+    return True
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
@@ -39,6 +69,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -54,6 +85,7 @@ def do_run_migrations(connection: Connection) -> None:
         # with no revision to show for it.
         compare_type=True,
         compare_server_default=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():

@@ -221,6 +221,19 @@ class Recommendation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
                 "status = 'suggested' AND source_risk_id IS NOT NULL"
             ),
         ),
+        Index("ix_recommendations_source_commitment_id", "source_commitment_id"),
+        # The same guarantee for `correct_record` proposals, which have no
+        # source risk and so fall outside the index above. Without it stage 7
+        # files a duplicate on every analysis run that sees the commitment.
+        Index(
+            "uq_recommendations_deal_id_source_commitment_id_suggested",
+            "deal_id",
+            "source_commitment_id",
+            unique=True,
+            postgresql_where=text(
+                "status = 'suggested' AND source_commitment_id IS NOT NULL"
+            ),
+        ),
     )
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
@@ -242,6 +255,16 @@ class Recommendation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_risk_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("risks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # The commitment a `correct_record` proposal is about. Null for every other
+    # action type. SET NULL for the same reason as source_risk_id, and for one
+    # more: claim_evidence.claim_id has no foreign key, so a CASCADE that
+    # deleted recommendation rows would orphan their evidence links behind
+    # services/claims.py's back. Migration 0015.
+    source_commitment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commitments.id", ondelete="SET NULL"),
         nullable=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)

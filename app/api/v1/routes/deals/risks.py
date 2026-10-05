@@ -6,6 +6,7 @@ in another and work out that they are the same thing.
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, Query, status
@@ -14,11 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import Annotated
 
 from app.api.deps import get_deal_or_404
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import ClaimEvidence, Deal, Recommendation, Risk, Task
 from app.models.enums import ClaimType, RiskStatus, TaskStatus
 from app.queries import SEVERITY_ORDER
 from app.schemas.v1.deal.risk import (
+    DealAnalysisState,
     DetectionResult,
     EvidenceItem,
     RecommendationAccept,
@@ -183,20 +186,66 @@ async def update_risk(
     return await get_risk(risk_id, deal, db)
 
 
+@router.get("/analysis", response_model=DealAnalysisState)
+async def get_analysis_state(
+    deal: Deal = Depends(get_deal_or_404),
+) -> Any:
+    """Is an AI pass pending for this deal, and why?
+
+    Phase 10 marks deals dirty in the service layer and the worker claims them
+    on a debounce, so between a stage change and the refreshed panel there is a
+    window where the screen is showing a stale answer and has no way to say so.
+    This is that missing half: the same columns the claim query reads, plus the
+    state those columns put the deal in.
+
+    Derived here rather than stored, against the same settings the worker uses
+    (`_claim_dirty_deal` in `worker.py`). A stored state column would be a second
+    copy of a decision the claim query already makes, and the two would drift the
+    first time the debounce was retuned.
+    """
+    now = datetime.now(timezone.utc)
+    quiet_cutoff = now - timedelta(seconds=settings.analysis_debounce_seconds)
+    max_cutoff = now - timedelta(seconds=settings.analysis_max_debounce_seconds)
+    sweep_cutoff = now - timedelta(hours=settings.analysis_sweep_hours)
+
+    if deal.analysis_dirty_first_at is not None:
+        due = (
+            deal.analysis_dirty_last_at is not None
+            and deal.analysis_dirty_last_at < quiet_cutoff
+        ) or deal.analysis_dirty_first_at < max_cutoff
+        state = "due" if due else "debouncing"
+    elif deal.analysis_swept_at is None or deal.analysis_swept_at < sweep_cutoff:
+        state = "stale"
+    else:
+        state = "clean"
+
+    return {
+        "deal_id": deal.id,
+        "state": state,
+        "dirty_first_at": deal.analysis_dirty_first_at,
+        "dirty_last_at": deal.analysis_dirty_last_at,
+        "dirty_reason": deal.analysis_dirty_reason,
+        "swept_at": deal.analysis_swept_at,
+        "debounce_seconds": settings.analysis_debounce_seconds,
+        "max_debounce_seconds": settings.analysis_max_debounce_seconds,
+        "sweep_hours": settings.analysis_sweep_hours,
+    }
+
+
 @router.post("/analysis", response_model=DetectionResult)
 async def run_detection(
     deal: Deal = Depends(get_deal_or_404), db: AsyncSession = Depends(get_db)
 ) -> Any:
     """Run the deterministic detector over this deal.
 
-    Four of the ten risk types need no model -- they are joins over tables that
+    Six of the ten risk types need no model -- they are joins over tables that
     already exist. Writes risks and their recommendations in one pass, because
     the RiskType -> ActionType mapping means they are generated together and two
     triggers could disagree.
 
-    An explicit trigger is a stopgap: detection should run on a schedule, or on
-    the writes that could change its answer. With no worker, asking is honest --
-    the same call made for meeting analysis.
+    The explicit trigger remains useful for an operator-requested refresh; the
+    worker also runs this detector eagerly on relevant writes and in its daily
+    sweep.
     """
     result = await detect_service.run(db, deal)
     await db.commit()

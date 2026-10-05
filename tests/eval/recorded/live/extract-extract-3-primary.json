@@ -1,0 +1,358 @@
+{
+  "_comment": "Live run by run_extraction_eval.py --live.",
+  "model": "openai/gpt-oss-120b/extract@3",
+  "role": "primary",
+  "prompt_version": "extract@3",
+  "recorded_at": "2026-10-05T11:01:42.528190+00:00",
+  "by_transcript": {
+    "01-discovery-2026-07-28": [
+      {
+        "fact_type": "requirement",
+        "chunk_index": 0,
+        "char_start": 285,
+        "char_end": 399,
+        "content": "They need to be able to produce an access log for third\u2011party integrations going back more than thirty days.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 0,
+        "char_start": 400,
+        "char_end": 432,
+        "content": "Auditors require twelve months of retention for integration access logs.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 0,
+        "char_start": 583,
+        "char_end": 653,
+        "content": "If they replace the logging layer, they want all logs in a single place.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 0,
+        "char_start": 795,
+        "char_end": 876,
+        "content": "The solution must normalize logs on ingest without requiring customer\u2011side adapters.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 1,
+        "char_start": 365,
+        "char_end": 393,
+        "content": "The system must handle a peak volume of around nine million events per day.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "stakeholder",
+        "chunk_index": 1,
+        "char_start": 591,
+        "char_end": 634,
+        "content": "Finance needs to sign off on the number.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "stakeholder",
+        "chunk_index": 1,
+        "char_start": 561,
+        "char_end": 589,
+        "content": "Marcus is the stakeholder for the platform side.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "stakeholder",
+        "chunk_index": 1,
+        "char_start": 535,
+        "char_end": 559,
+        "content": "Priya is the stakeholder for the security side.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "budget",
+        "chunk_index": 1,
+        "char_start": 750,
+        "char_end": 831,
+        "content": "The security budget for this year is about a hundred and fifty thousand.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 1,
+        "char_start": 832,
+        "char_end": 897,
+        "content": "Any spend over a hundred and fifty thousand must be approved by the board.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 2,
+        "char_start": 508,
+        "char_end": 615,
+        "content": "If the spend exceeds the threshold, a full competitive procurement process is required.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 2,
+        "char_start": 761,
+        "char_end": 806,
+        "content": "For amounts over a hundred and fifty thousand, at least three bids are required.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 3,
+        "char_start": 46,
+        "char_end": 153,
+        "content": "If the spend exceeds the threshold, a full competitive process with at least two other vendors is required.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "budget",
+        "chunk_index": 3,
+        "char_start": 299,
+        "char_end": 344,
+        "content": "The policy requires three bids for any spend over a hundred and fifty.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "competitor",
+        "chunk_index": 3,
+        "char_start": 421,
+        "char_end": 431,
+        "content": "Vanta Logs is mentioned as a competitor.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "deadline",
+        "chunk_index": 3,
+        "char_start": 708,
+        "char_end": 754,
+        "content": "The contract must be signed by the middle of October at the latest.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 3,
+        "char_start": 803,
+        "char_end": 889,
+        "content": "Maya will provide a scoping proposal that stays within the threshold.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 3,
+        "char_start": 895,
+        "char_end": 934,
+        "content": "Maya will send the SOC 2 Type II report.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 4,
+        "char_start": 321,
+        "char_end": 366,
+        "content": "Maya will deliver the SOC 2 report by the seventh of August.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 4,
+        "char_start": 386,
+        "char_end": 425,
+        "content": "Priya's team needs about three weeks to review the SOC 2 report.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 4,
+        "char_start": 493,
+        "char_end": 572,
+        "content": "Signing will not occur until the team runs a load test on a sandbox.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 4,
+        "char_start": 639,
+        "char_end": 683,
+        "content": "Maya will include sandbox access in the proposal.",
+        "confidence": 1.0
+      }
+    ],
+    "02-security-review-2026-08-14": [
+      {
+        "fact_type": "objection",
+        "chunk_index": 0,
+        "char_start": 37,
+        "char_end": 60,
+        "content": "Priya says they never received the SOC 2 report.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 0,
+        "char_start": 486,
+        "char_end": 585,
+        "content": "Maya commits to deliver the redacted SOC 2 report this week.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 1,
+        "char_start": 362,
+        "char_end": 486,
+        "content": "Marcus requires seeing p99 ingest latency and behavior of a malformed timestamp.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "objection",
+        "chunk_index": 2,
+        "char_start": 664,
+        "char_end": 758,
+        "content": "Priya reports her team has not signed off on the architecture and hasn't started reviewing it.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 2,
+        "char_start": 759,
+        "char_end": 813,
+        "content": "Priya says internal escalation is blocked until the architecture sign\u2011off is completed.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "objection",
+        "chunk_index": 3,
+        "char_start": 103,
+        "char_end": 197,
+        "content": "Priya's team has not signed off on the architecture and has not started reviewing it.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 3,
+        "char_start": 198,
+        "char_end": 252,
+        "content": "The process cannot move forward until the team signs off.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 3,
+        "char_start": 347,
+        "char_end": 477,
+        "content": "Priya requests the SOC 2 report and a named security contact who can answer questions within a day.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 3,
+        "char_start": 507,
+        "char_end": 561,
+        "content": "Maya promises to connect Priya with the security lead.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "budget",
+        "chunk_index": 3,
+        "char_start": 675,
+        "char_end": 707,
+        "content": "The proposal amount is a hundred and sixty-two thousand.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 4,
+        "char_start": 454,
+        "char_end": 484,
+        "content": "Conversation cannot happen until security signs off.",
+        "confidence": 1.0
+      }
+    ],
+    "03-negotiation-checkin-2026-09-18": [
+      {
+        "fact_type": "stakeholder",
+        "chunk_index": 0,
+        "char_start": 137,
+        "char_end": 183,
+        "content": "Maya Chen is responsible for the Northwind account.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "stakeholder",
+        "chunk_index": 0,
+        "char_start": 200,
+        "char_end": 233,
+        "content": "Dana Whitfield is the CFO.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "budget",
+        "chunk_index": 0,
+        "char_start": 349,
+        "char_end": 403,
+        "content": "Dana approved a budget of two hundred and twenty thousand.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 1,
+        "char_start": 892,
+        "char_end": 967,
+        "content": "Signing will occur by the second week of October only if the paper is received this week.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 2,
+        "char_start": 243,
+        "char_end": 323,
+        "content": "Maya Chen will send the order form and MSA to legal by Friday the twentieth.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "decision_criteria",
+        "chunk_index": 2,
+        "char_start": 355,
+        "char_end": 439,
+        "content": "Dana requires the professional services scope to be a fixed fee, not time and materials.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 2,
+        "char_start": 491,
+        "char_end": 531,
+        "content": "Maya Chen will confirm the fixed fee in the contract paper.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "requirement",
+        "chunk_index": 2,
+        "char_start": 545,
+        "char_end": 604,
+        "content": "Marcus wants the sandbox to remain available through the migration.",
+        "confidence": 1.0
+      },
+      {
+        "fact_type": "commitment",
+        "chunk_index": 2,
+        "char_start": 661,
+        "char_end": 679,
+        "content": "Maya Chen will include the sandbox request in the paper.",
+        "confidence": 1.0
+      }
+    ]
+  },
+  "totals": {
+    "reported": 42,
+    "located": 42,
+    "unlocatable": 0,
+    "payload_errors": 6,
+    "failed_transcripts": {}
+  }
+}

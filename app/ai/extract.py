@@ -170,9 +170,21 @@ async def extract_window(
     meeting_type: str,
     occurred_at: str,
     budget: Optional[client.RunBudget] = None,
+    role: str = client.ROLE_PRIMARY,
+    prompt: Optional[Any] = None,
 ) -> Tuple[List[CandidateFact], Optional[client.AIRun]]:
-    """One structured call over one window."""
-    prompt = get_prompt("extract")
+    """One structured call over one window.
+
+    ``role`` and ``prompt`` exist for the eval harness and default to exactly
+    what the pipeline used before they were added. Both are overridable for the
+    same reason: tasks 11.10 and 11.11 have to score *this* extractor under a
+    different prompt version and a different model, and an eval that reaches
+    its own copy of the call measures its copy. ``run_extraction_eval.py``'s
+    docstring makes the point -- an eval scored against a prompt nothing else
+    uses measures nothing -- and that applies just as much to the client call
+    around it.
+    """
+    prompt = prompt or get_prompt("extract")
     result, run = await client.structured(
         ExtractionResult,
         prompt.messages(
@@ -182,7 +194,7 @@ async def extract_window(
         ),
         task="extract",
         prompt_version=prompt.version,
-        role=client.ROLE_PRIMARY,
+        role=role,
         reasoning_effort="medium",
         budget=budget,
     )
@@ -195,6 +207,8 @@ async def extract_facts(
     meeting_type: str,
     occurred_at: str,
     budget: Optional[client.RunBudget] = None,
+    role: str = client.ROLE_PRIMARY,
+    prompt: Optional[Any] = None,
 ) -> List[CandidateFact]:
     """Extract from every window, concurrently.
 
@@ -209,7 +223,8 @@ async def extract_facts(
     results = await asyncio.gather(
         *(
             extract_window(
-                window, meeting_type=meeting_type, occurred_at=occurred_at, budget=budget
+                window, meeting_type=meeting_type, occurred_at=occurred_at,
+                budget=budget, role=role, prompt=prompt,
             )
             for window in windows
         )

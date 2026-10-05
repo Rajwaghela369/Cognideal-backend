@@ -1,0 +1,343 @@
+{
+  "_comment": "Task 11.9. Raw shadow runs, scored by run_stability_eval.score.",
+  "deal": "SecureFlow Enterprise",
+  "recorded_at": "2026-10-02T13:22:22.317667+00:00",
+  "runs": [
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 5.1
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 37.5
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 40.3
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 43.7
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 39.7
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 43.0
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 37.2
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "single_threaded/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "single_threaded/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 36.6
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 42.5
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "single_threaded/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "single_threaded/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 42.6
+    }
+  ]
+}

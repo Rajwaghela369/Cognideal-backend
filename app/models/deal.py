@@ -80,6 +80,16 @@ class Deal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_activity_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    analysis_dirty_first_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    analysis_dirty_last_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    analysis_dirty_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    analysis_swept_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DealContact(UUIDPrimaryKeyMixin, TimestampMixin, Base):

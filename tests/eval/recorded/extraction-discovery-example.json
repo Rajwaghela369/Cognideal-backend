@@ -10,6 +10,7 @@
     "that cannot happen: chunks are immutable and re-ingest is",
     "delete-and-re-upload (docs/schema/README.md section 3)."
   ],
+  "_not_a_model_run": true,
   "transcript": "transcripts/01-discovery-2026-07-28.txt",
   "model": "openai/gpt-oss-120b",
   "prompt_version": "extract@1",

@@ -32,6 +32,7 @@ service.
 import asyncio
 import logging
 import signal
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, List, Optional, Tuple
 
 from sqlalchemy import func, select, update
@@ -42,8 +43,9 @@ from app.ai.graph import run_meeting_analysis
 from app.ai.stage_registry import CriticalStageFailed
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models import Meeting
-from app.models.enums import AnalysisStatus
+from app.models import ChatMessage, Deal, Meeting
+from app.models.enums import AnalysisStatus, MessageStatus
+from app.services import analysis as analysis_service
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -137,10 +139,138 @@ async def _claim_queued_meeting(db: AsyncSession) -> Optional[Meeting]:
     )
 
 
+async def poll_dirty_deals() -> bool:
+    """Run one debounced Tier 2 analysis with a row lock as single-flight."""
+    async with SessionLocal() as db:
+        deal = await _claim_dirty_deal(db)
+        if deal is None:
+            return False
+        deal_id = deal.id
+        budget = RunBudget()
+        try:
+            await analysis_service.run_deal_analysis(db, deal_id, budget=budget)
+            deal.analysis_dirty_first_at = None
+            deal.analysis_dirty_last_at = None
+            deal.analysis_dirty_reason = None
+            deal.analysis_swept_at = func.now()
+            await db.commit()
+        except Exception:  # noqa: BLE001 -- rollback leaves the enqueue intact
+            await db.rollback()
+            logger.exception("deal.analysis_crashed deal=%s", deal_id)
+        return True
+
+
+async def _claim_dirty_deal(db: AsyncSession) -> Optional[Deal]:
+    now = datetime.now(timezone.utc)
+    quiet_cutoff = now - timedelta(seconds=settings.analysis_debounce_seconds)
+    max_cutoff = now - timedelta(seconds=settings.analysis_max_debounce_seconds)
+    return await db.scalar(
+        select(Deal)
+        .where(
+            Deal.analysis_dirty_first_at.is_not(None),
+            (
+                (Deal.analysis_dirty_last_at < quiet_cutoff)
+                | (Deal.analysis_dirty_first_at < max_cutoff)
+            ),
+        )
+        .order_by(Deal.analysis_dirty_last_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
+async def poll_sweep() -> bool:
+    """Refresh one clean deal whose clock-dependent analysis is stale."""
+    async with SessionLocal() as db:
+        deal = await _claim_sweep_deal(db)
+        if deal is None:
+            return False
+        deal_id = deal.id
+        budget = RunBudget()
+        try:
+            await analysis_service.run_deal_analysis(db, deal_id, budget=budget)
+            deal.analysis_swept_at = func.now()
+            await db.commit()
+        except Exception:  # noqa: BLE001 -- old swept_at makes it retryable
+            await db.rollback()
+            logger.exception("deal.sweep_crashed deal=%s", deal_id)
+        return True
+
+
+async def _claim_sweep_deal(db: AsyncSession) -> Optional[Deal]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.analysis_sweep_hours)
+    return await db.scalar(
+        select(Deal)
+        .where(
+            Deal.analysis_dirty_first_at.is_(None),
+            (
+                Deal.analysis_swept_at.is_(None)
+                | (Deal.analysis_swept_at < cutoff)
+            ),
+        )
+        .order_by(Deal.analysis_swept_at.asc().nulls_first())
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
+async def reap_abandoned_streams() -> bool:
+    """Finalize chat turns whose client never came back. Task 11.6.
+
+    Task 9.3 commits an empty assistant row with `status='streaming'` *before*
+    inference, so a refresh mid-answer can recover the turn. The gap was that
+    nothing ever closed a row whose reader closed the tab: the generator stops
+    being consumed, the request task is cancelled, and the row stays `streaming`
+    forever -- read by the messages route as a turn still in flight.
+
+    `error` rather than `complete`, with whatever content was checkpointed left
+    in place. The answer was interrupted and may stop mid-sentence; calling that
+    complete would present a truncated answer as a finished one, and partial
+    content with an honest status is the more useful of the two.
+
+    The window has to exceed the longest plausible single turn, or this reaps
+    live streams -- `created_at` is set when the row is inserted, which is before
+    the model has produced anything.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.chat_stream_timeout_seconds
+    )
+    async with SessionLocal() as db:
+        rows = list(
+            (
+                await db.scalars(
+                    select(ChatMessage)
+                    .where(
+                        ChatMessage.status == MessageStatus.STREAMING,
+                        ChatMessage.created_at < cutoff,
+                    )
+                    .limit(20)
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+        )
+        if not rows:
+            return False
+        for row in rows:
+            row.status = MessageStatus.ERROR
+            if not row.content:
+                row.content = "(interrupted before any output was produced)"
+            logger.info(
+                "chat.stream_reaped message=%s session=%s chars=%d",
+                row.id, row.session_id, len(row.content),
+            )
+        await db.commit()
+        return True
+
+
 # Ordered by urgency. Phase 10 appends `poll_dirty_deals` and `poll_sweep` here;
-# the loop needs no change to carry them.
+# the loop needs no change to carry them, which is also why 11.6's reaper is a
+# four-line addition rather than a second process.
 POLLERS: List[Poller] = [
     ("queued_meetings", poll_queued_meetings),
+    ("dirty_deals", poll_dirty_deals),
+    ("sweep", poll_sweep),
+    ("abandoned_streams", reap_abandoned_streams),
 ]
 
 

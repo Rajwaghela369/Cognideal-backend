@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.models import Document, DocumentChunk
 from app.schemas.v1.document import ChunkDetail, DocumentDetail
 from app.services import claims as claims_service
+from app.services import analysis as analysis_service
 from app.services import storage
 
 router = APIRouter(tags=["documents"])
@@ -115,8 +116,17 @@ async def delete_document(
     silently loses its transcript link.
     """
     await claims_service.delete_links_for_document(db, document.id)
+    deal_id = document.deal_id
     key = document.storage_uri
     await db.delete(document)
+    await analysis_service.record_change(
+        db,
+        deal_id,
+        "document deleted",
+        table="documents",
+        row_id=document.id,
+        fields=("id",),
+    )
     await db.commit()
     storage.delete_object(key)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

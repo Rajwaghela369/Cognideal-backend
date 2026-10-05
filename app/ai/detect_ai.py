@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import client, dossier as dossier_mod
+from app.ai import client, dossier as dossier_mod, validate
 from app.ai.prompts import get as get_prompt
 from app.ai.schemas import DetectionOut, RiskOut
 from app.models import Recommendation, Risk
@@ -52,8 +52,8 @@ from app.models.enums import (
     RiskType,
     Severity,
 )
-from app.services import claims as claims_service
-from app.models.enums import ClaimType, SourceKind
+from app.services import claims as claims_service, gate0
+from app.models.enums import ClaimType, SourceKind, ValidationMethod
 
 logger = logging.getLogger("dealpilot.ai.detect")
 
@@ -105,6 +105,7 @@ class DetectionResult:
     suppressed: List[Tuple[str, str]] = field(default_factory=list)
     resolved: List[uuid.UUID] = field(default_factory=list)
     verdicts: Dict[str, str] = field(default_factory=dict)
+    verdict_evidence: Dict[str, List[dossier_mod.Entry]] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
@@ -278,6 +279,13 @@ async def propose(
         if not entries:
             result.rejected.append((risk.risk_type, "no evidence cited"))
             continue
+        _, rec_unknown = _resolve_refs(risk.recommendation.evidence_refs, dossier)
+        if rec_unknown:
+            result.rejected.append(
+                (risk.risk_type, "recommendation cited unknown handles: %s" %
+                 ", ".join(sorted(rec_unknown)))
+            )
+            continue
 
         risk_key = canonical_key(risk.risk_key) if risk.risk_type == RiskType.OTHER else ""
         if risk.risk_type == RiskType.OTHER:
@@ -301,7 +309,15 @@ async def propose(
 
     for verdict in answer.open_risk_verdicts:
         if verdict.risk_id in dossier.open_risks:
+            entries, unknown = _resolve_refs(verdict.evidence_refs, dossier)
+            if unknown:
+                logger.warning(
+                    "detect.verdict_unknown_handles risk=%s handles=%s",
+                    verdict.risk_id, sorted(unknown),
+                )
+                continue
             result.verdicts[verdict.risk_id] = verdict.verdict
+            result.verdict_evidence[verdict.risk_id] = entries
         else:
             logger.warning("detect.verdict_for_unknown_risk id=%s", verdict.risk_id)
 
@@ -336,6 +352,8 @@ async def apply(
     deal_id: uuid.UUID,
     result: DetectionResult,
     dossier: dossier_mod.Dossier,
+    *,
+    budget: Optional[client.RunBudget] = None,
 ) -> DetectionResult:
     """Upsert the proposals and act on the verdicts. No model call.
 
@@ -359,6 +377,19 @@ async def apply(
             result.suppressed.append((("%s/%s" % proposal.key).rstrip("/"), reason))
             continue
 
+        risk_claim = "%s. %s" % (proposal.title, proposal.description)
+        risk_grounding = await _ground(
+            db, risk_claim, proposal.evidence, budget=budget
+        )
+        rec = proposal.recommendation
+        rec_entries, _ = _resolve_refs(rec.evidence_refs, dossier)
+        rec_entries = rec_entries or proposal.evidence
+        rec_claim = "%s. %s %s" % (rec.title, rec.description, rec.rationale)
+        rec_grounding = await _ground(db, rec_claim, rec_entries, budget=budget)
+        if risk_grounding is None or rec_grounding is None:
+            result.rejected.append((proposal.risk_type, "failed Gate 0 or Gate 1"))
+            continue
+
         current = existing.get(proposal.key)
         severity = apply_severity_policy(
             proposal.severity, current, computed_severity(proposal.risk_type, dossier)
@@ -369,49 +400,61 @@ async def apply(
             current.severity = severity
             current.model = client.model_for(client.ROLE_PRIMARY)
             current.detector_version = DETECTOR_VERSION
+            await _persist_grounding(
+                db, deal_id, ClaimType.RISK, current.id, risk_grounding
+            )
             result.bumped.append(current.id)
-            continue
+            risk = current
+        else:
+            risk = Risk(
+                deal_id=deal_id,
+                risk_type=proposal.risk_type,
+                risk_key=proposal.risk_key,
+                title=proposal.title,
+                description=proposal.description,
+                severity=severity,
+                status=RiskStatus.OPEN,
+                origin=Origin.AI,
+                confidence=proposal.confidence,
+                model=client.model_for(client.ROLE_PRIMARY),
+                detector_version=DETECTOR_VERSION,
+            )
+            db.add(risk)
+            await db.flush()
+            await _persist_grounding(
+                db, deal_id, ClaimType.RISK, risk.id, risk_grounding
+            )
+            result.inserted.append(risk.id)
 
-        risk = Risk(
-            deal_id=deal_id,
-            risk_type=proposal.risk_type,
-            risk_key=proposal.risk_key,
-            title=proposal.title,
-            description=proposal.description,
-            severity=severity,
-            status=RiskStatus.OPEN,
-            origin=Origin.AI,
-            confidence=proposal.confidence,
-            model=client.model_for(client.ROLE_PRIMARY),
-            detector_version=DETECTOR_VERSION,
+        recommendation = await db.scalar(
+            select(Recommendation).where(
+                Recommendation.deal_id == deal_id,
+                Recommendation.source_risk_id == risk.id,
+                Recommendation.status == RecommendationStatus.SUGGESTED,
+            )
         )
-        db.add(risk)
+        if recommendation is None:
+            recommendation = Recommendation(
+                deal_id=deal_id,
+                source_risk_id=risk.id,
+                status=RecommendationStatus.SUGGESTED,
+                origin=Origin.AI,
+            )
+            db.add(recommendation)
+        recommendation.title = rec.title.strip()
+        recommendation.description = rec.description.strip()
+        recommendation.rationale = rec.rationale.strip()
+        recommendation.action_type = rec.action_type.value
+        recommendation.priority = rec.priority
+        recommendation.confidence = proposal.confidence
+        recommendation.model = client.model_for(client.ROLE_PRIMARY)
+        recommendation.detector_version = DETECTOR_VERSION
         await db.flush()
-        await _cite(db, deal_id, ClaimType.RISK, risk.id, proposal.evidence)
-
-        rec = proposal.recommendation
-        recommendation = Recommendation(
-            deal_id=deal_id,
-            source_risk_id=risk.id,
-            title=rec.title.strip(),
-            description=rec.description.strip(),
-            rationale=rec.rationale.strip(),
-            action_type=rec.action_type.value,
-            priority=rec.priority,
-            status=RecommendationStatus.SUGGESTED,
-            origin=Origin.AI,
-            confidence=proposal.confidence,
-            model=client.model_for(client.ROLE_PRIMARY),
-            detector_version=DETECTOR_VERSION,
+        await _persist_grounding(
+            db, deal_id, ClaimType.RECOMMENDATION, recommendation.id, rec_grounding
         )
-        db.add(recommendation)
-        await db.flush()
-        rec_entries, _ = _resolve_refs(rec.evidence_refs, dossier)
-        await _cite(db, deal_id, ClaimType.RECOMMENDATION, recommendation.id,
-                    rec_entries or proposal.evidence)
-        result.inserted.append(risk.id)
 
-    await _apply_verdicts(db, result, dossier)
+    await _apply_verdicts(db, result, dossier, budget=budget)
     await db.flush()
     logger.info(
         "detect.applied deal=%s inserted=%d bumped=%d suppressed=%d resolved=%d",
@@ -421,20 +464,77 @@ async def apply(
     return result
 
 
-async def _cite(db, deal_id, claim_type, claim_id, entries) -> None:
-    for entry in entries:
+def _citation(entry: dossier_mod.Entry) -> Dict[str, Any]:
+    return {
+        "source_kind": entry.source_kind,
+        "snippet": entry.snippet,
+        "record_ref": entry.record_ref,
+        "document_id": entry.document_id,
+        "chunk_id": entry.chunk_id,
+        "char_start": entry.char_start,
+        "char_end": entry.char_end,
+        "speaker": entry.speaker,
+        "occurred_at": entry.occurred_at,
+    }
+
+
+async def _ground(db, claim_text, entries, *, budget=None):
+    """Run both grounding gates before an assertion reaches the database."""
+    check = await gate0.check_claim(
+        db, claim_text, [_citation(entry) for entry in entries]
+    )
+    if not check.passed:
+        logger.info(
+            "detect.gate0_rejected claim=%r reason=%s", claim_text[:80], check.reason
+        )
+        return None
+    surviving = [
+        (entry, link) for entry, link in zip(entries, check.links) if link.verified
+    ]
+    validation = await validate.validate_claim(
+        claim_text, [entry.snippet for entry, _ in surviving], budget=budget
+    )
+    if validation is None or validation.quarantined:
+        logger.info(
+            "detect.gate1_rejected claim=%r verdict=%s",
+            claim_text[:80], validation.verdict if validation else None,
+        )
+        return None
+    return surviving, validation
+
+
+async def _persist_grounding(db, deal_id, claim_type, claim_id, grounding) -> None:
+    surviving, validation = grounding
+    for entry, link in surviving:
         await claims_service.attach_evidence(
             db,
             claim_type=claim_type,
             claim_id=claim_id,
             deal_id=deal_id,
             source_kind=entry.source_kind,
-            snippet=entry.text,
+            snippet=entry.snippet,
             record_ref=entry.record_ref,
+            document_id=entry.document_id,
+            chunk_id=entry.chunk_id,
+            char_start=entry.char_start,
+            char_end=entry.char_end,
+            speaker=entry.speaker,
+            occurred_at=entry.occurred_at,
+            verification_status=link.status,
         )
+    await claims_service.record_validation(
+        db,
+        claim_type=claim_type,
+        claim_id=claim_id,
+        verdict=validation.verdict,
+        method=ValidationMethod.LLM,
+        rationale=validation.rationale,
+        model=validation.model,
+        validator_version=validation.validator_version,
+    )
 
 
-async def _apply_verdicts(db, result: DetectionResult, dossier) -> None:
+async def _apply_verdicts(db, result: DetectionResult, dossier, *, budget=None) -> None:
     """Resolve only on a repeated, cited `resolved`.
 
     One `resolved` is not enough: a single pass saying a risk is gone is the
@@ -446,7 +546,21 @@ async def _apply_verdicts(db, result: DetectionResult, dossier) -> None:
     """
     for risk_id, verdict in result.verdicts.items():
         risk = dossier.open_risks.get(risk_id)
-        if risk is None or verdict != "resolved":
+        if (
+            risk is None
+            or verdict != "resolved"
+            or risk.risk_type in _RULE_TYPES
+        ):
+            continue
+        entries = result.verdict_evidence.get(risk_id) or []
+        grounding = await _ground(
+            db,
+            "The risk '%s' is resolved." % risk.title,
+            entries,
+            budget=budget,
+        )
+        if grounding is None:
+            logger.info("detect.resolution_rejected risk=%s", risk.id)
             continue
         # `description` carries the strike because there is nowhere else to put
         # it without a migration; replace with a column if this outlives Phase 7.
@@ -455,6 +569,9 @@ async def _apply_verdicts(db, result: DetectionResult, dossier) -> None:
             risk.status = RiskStatus.RESOLVED
             risk.resolved_at = func.now()
             risk.description = (risk.description or "").replace(marker, "").strip()
+            await _persist_grounding(
+                db, risk.deal_id, ClaimType.RISK, risk.id, grounding
+            )
             result.resolved.append(risk.id)
         else:
             risk.description = "%s %s" % (risk.description or "", marker)
@@ -475,7 +592,7 @@ async def shadow_run(
     """Propose, score against the SQL rules, write nothing.
 
     The dress rehearsal, and the reason the deterministic detector stays once
-    this exists. The four SQL rules cannot hallucinate and cannot miss, so
+    this exists. The six SQL rules cannot hallucinate and cannot miss, so
     **any rule-detected risk the model did not propose is a measured recall
     miss with no human labelling** -- free ground truth that regenerates on
     every run, forever.
@@ -526,16 +643,18 @@ async def shadow_run(
         "recall": round(len(found) / len(overlapping), 4) if overlapping else None,
         "missed": sorted("%s/%s" % k for k in missed),
         "ai_only": sorted("%s/%s" % k for k in (ai_keys - overlapping)),
-        "_recall_note": "proposed + affirmed-as-still-present, vs the four SQL rules",
+        "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
         "verdicts": result.verdicts,
     }
 
 
-#: The four types the SQL rules cover, and therefore the only ones recall can
+#: The six types the SQL rules cover, and therefore the only ones recall can
 #: be measured on without a human writing labels.
 _RULE_TYPES = {
     RiskType.NO_ECONOMIC_BUYER.value,
     RiskType.SINGLE_THREADED.value,
     RiskType.STALLED_STAGE.value,
     RiskType.CLOSE_DATE_AT_RISK.value,
+    RiskType.MISSED_COMMITMENT.value,
+    RiskType.GONE_QUIET.value,
 }

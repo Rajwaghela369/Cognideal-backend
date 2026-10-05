@@ -56,6 +56,17 @@ async def apply_stage_change(
     elif was_closed and not now_closed:
         deal.closed_at = None
 
+    from app.services import analysis
+
+    await analysis.record_change(
+        db,
+        deal.id,
+        "deal.stage",
+        table="deals",
+        row_id=deal.id,
+        fields=("stage",),
+    )
+
 
 async def demote_primary_stakeholder(
     db: AsyncSession, deal_id: uuid.UUID, keeping: Optional[uuid.UUID] = None

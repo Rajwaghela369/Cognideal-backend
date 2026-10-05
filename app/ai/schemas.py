@@ -330,3 +330,29 @@ class DetectionOut(BaseModel):
     risks: List[RiskOut]
     open_risk_verdicts: List[OpenRiskVerdict]
     proactive: List[RecommendationOut]
+
+
+# --------------------------------------------------------------------------
+# Phase 8 -- meeting briefs
+# --------------------------------------------------------------------------
+
+
+class BriefOut(BaseModel):
+    """A pre-meeting brief assembled from already-prefetched deal state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    objectives: List[str] = Field(description="Two to five concrete objectives")
+    key_risks: List[str] = Field(description="The risks most relevant to this meeting")
+    recommended_questions: List[str] = Field(
+        description="Questions the seller should ask, phrased verbatim"
+    )
+    context_summary: str = Field(
+        description="A concise summary of the deal context relevant to this meeting"
+    )
+
+
+class ChatTitleOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="A short conversation title, at most six words")

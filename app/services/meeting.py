@@ -85,6 +85,16 @@ async def apply_status_change(
         # so the touch defaults to now() -- within a request the two are the
         # same moment for every purpose this column serves.
         await activity.touch_deal(db, meeting.deal_id)
+        from app.services import analysis
+
+        await analysis.record_change(
+            db,
+            meeting.deal_id,
+            "meeting.completed",
+            table="meetings",
+            row_id=meeting.id,
+            fields=("status", "ended_at"),
+        )
     elif to_status == MeetingStatus.SCHEDULED and was_completed:
         meeting.started_at = None
         meeting.ended_at = None
@@ -141,27 +151,16 @@ async def create_contact_from_identity(
     account_id comes from the deal, never from the client, so a contact cannot
     land on the wrong company.
 
-    `contacts` carries UNIQUE(account_id, email). Left to the database a
-    repeat email is an IntegrityError at commit, which reaches the client as a
-    500; caught here it becomes the genuinely useful answer -- this person
-    already exists, here is their id, link instead of creating.
+    The duplicate-email rule is `services/account.py`'s, not a second copy of
+    it: the `/accounts/{id}/contacts` collection creates contacts too, and two
+    writers disagreeing about what a repeat email means is how one path starts
+    returning 500s the other handles.
     """
-    if identity.email:
-        existing = await db.scalar(
-            select(Contact).where(
-                Contact.account_id == deal.account_id,
-                Contact.email == identity.email,
-            )
-        )
-        if existing is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"{existing.first_name} {existing.last_name} already uses "
-                    f"{identity.email} on this account (contact {existing.id}). "
-                    f"Resolve with contact_id instead of creating a duplicate."
-                ),
-            )
+    from app.services import account as account_service
+
+    await account_service.assert_email_free(
+        db, deal.account_id, identity.email
+    )
 
     contact = Contact(account_id=deal.account_id, **identity.model_dump())
     db.add(contact)

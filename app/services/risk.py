@@ -121,6 +121,18 @@ async def accept_recommendation(
     rec.created_task_id = task.id
     rec.status = RecommendationStatus.ACCEPTED
     rec.decided_at = func.now()
+    # Task events refresh deterministic state, but never enqueue an AI pass.
+    # This task itself is AI-originated, so the loop guard is explicit too.
+    from app.services import analysis as analysis_service
+
+    await analysis_service.record_change(
+        db,
+        deal_id,
+        "AI recommendation accepted as task",
+        tier1=True,
+        tier2=False,
+        origin=Origin.AI,
+    )
     return task
 
 

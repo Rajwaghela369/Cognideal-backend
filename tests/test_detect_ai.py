@@ -8,10 +8,21 @@ for free. No model, no database.
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import func, select
 
-from app.ai import detect_ai
-from app.ai.dossier import Dossier
-from app.models.enums import DismissalReason, RiskType, Severity
+from app.ai import detect_ai, validate
+from app.ai.dossier import Dossier, Entry
+from app.ai.schemas import RecommendationOut
+from app.models import ClaimEvidence, Recommendation, Risk
+from app.models.enums import (
+    ActionType,
+    DismissalReason,
+    Priority,
+    RiskType,
+    Severity,
+    SourceKind,
+    Verdict,
+)
 
 
 class _Risk:
@@ -175,3 +186,59 @@ def test_recall_counts_affirmed_open_risks_not_only_new_proposals():
 
     corrected = len(rule_keys & (proposed | affirmed)) / len(rule_keys)
     assert corrected == 1.0
+
+
+@pytest.mark.asyncio
+async def test_apply_is_grounded_and_idempotent(db, deal_id, monkeypatch):
+    async def supported(*args, **kwargs):
+        return validate.Validation(
+            verdict=Verdict.SUPPORTED,
+            rationale="The cited stage supports the assertion.",
+            model="test-model",
+            validator_version="validate@test",
+        )
+
+    monkeypatch.setattr(validate, "validate_claim", supported)
+    dossier = Dossier(deal_id=deal_id)
+    dossier.entries["r1"] = Entry(
+        handle="r1",
+        source_kind=SourceKind.RECORD,
+        text="stage = discovery",
+        snippet="discovery",
+        record_ref={"table": "deals", "id": str(deal_id), "field": "stage"},
+    )
+    recommendation = RecommendationOut(
+        action_type=ActionType.SCHEDULE_MEETING,
+        title="Schedule the next meeting",
+        description="Put the next conversation on the calendar.",
+        rationale="The deal remains in discovery.",
+        priority=Priority.MEDIUM,
+        evidence_refs=["r1"],
+    )
+
+    def result():
+        return detect_ai.DetectionResult(proposed=[detect_ai.Proposal(
+            risk_type=RiskType.OTHER.value,
+            risk_key="discovery_drag",
+            title="Discovery is dragging",
+            description="The deal remains in discovery.",
+            severity=Severity.MEDIUM,
+            confidence=0.8,
+            evidence=[dossier.entries["r1"]],
+            recommendation=recommendation,
+        )])
+
+    first = await detect_ai.apply(db, deal_id, result(), dossier)
+    second = await detect_ai.apply(db, deal_id, result(), dossier)
+
+    assert len(first.inserted) == 1
+    assert second.inserted == []
+    assert len(second.bumped) == 1
+    assert await db.scalar(select(func.count()).select_from(Risk).where(
+        Risk.deal_id == deal_id, Risk.risk_key == "discovery_drag"
+    )) == 1
+    assert await db.scalar(select(func.count()).select_from(Recommendation).where(
+        Recommendation.deal_id == deal_id
+    )) == 1
+    assert await db.scalar(select(func.count()).select_from(ClaimEvidence)) >= 2
+    await db.commit()

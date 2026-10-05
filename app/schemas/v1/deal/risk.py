@@ -236,3 +236,40 @@ class RecommendationFilters(BaseModel):
         description="true lists recommendations with no source_risk_id -- the "
         "proactive ones, which the risk panel cannot show",
     )
+
+
+class DealAnalysisState(BaseModel):
+    """Phase 10's trigger state, read back.
+
+    The worker's two claim queries are the authority on when a deal runs; this
+    projection reports what they would decide *now* so a badge and the claim
+    cannot disagree. `state` is derived, never stored:
+
+    ``clean``       nothing pending, swept inside the window
+    ``debouncing``  marked dirty, still inside the quiet window -- more edits
+                    are expected and will collapse into one run
+    ``due``         marked dirty and past the quiet or maximum window; the next
+                    poll claims it
+    ``stale``       not dirty, but `analysis_swept_at` is null or older than the
+                    sweep window, so the nightly pass will pick it up
+
+    ``debouncing`` and ``due`` are kept apart because they mean opposite things
+    to a person watching: one says "still collecting your edits", the other says
+    "running shortly". Collapsing them into "queued" would make the quiet window
+    look like latency.
+    """
+
+    model_config = ORM
+
+    deal_id: uuid.UUID
+    state: str
+    dirty_first_at: Optional[datetime] = None
+    dirty_last_at: Optional[datetime] = None
+    dirty_reason: Optional[str] = None
+    swept_at: Optional[datetime] = None
+    #: Echoed so a client can render "runs in ~40s" without hardcoding the
+    #: server's debounce, and so a misconfiguration is visible rather than
+    #: inferred from timing.
+    debounce_seconds: int
+    max_debounce_seconds: int
+    sweep_hours: int

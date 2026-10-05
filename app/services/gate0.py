@@ -51,12 +51,12 @@ RESOLVABLE_TABLES = {
               "last_activity_at", "win_probability", "name"},
     "deal_contacts": {"buying_role", "influence", "sentiment", "is_primary"},
     "deal_stage_history": {"from_stage", "to_stage", "changed_at"},
-    "meetings": {"status", "meeting_type", "scheduled_at", "started_at", "ended_at",
-                 "summary", "sentiment"},
+    "meetings": {"title", "status", "meeting_type", "scheduled_at", "started_at",
+                 "ended_at", "summary", "sentiment"},
     "meeting_attendees": {"raw_name", "contact_id", "is_internal", "attended"},
     "commitments": {"status", "due_date", "owner_side", "owner_name", "description"},
     "contacts": {"first_name", "last_name", "title", "email"},
-    "tasks": {"status", "due_date", "title"},
+    "tasks": {"status", "due_date", "title", "priority"},
 }
 
 # A monetary amount written in figures: $180,000 / 180000 USD / 1.5m.
@@ -94,7 +94,11 @@ def _normalise(value: str) -> str:
     "$180,000" and "180000" are the same figure, and a claim that writes one
     while the source writes the other is not a fabrication.
     """
-    return re.sub(r"[\s,$£€]", "", value).lower().rstrip(".")
+    normalised = re.sub(r"[\s,$£€]", "", value).lower().rstrip(".")
+    # asyncpg renders UTC datetimes as ``+00:00`` while PostgreSQL ``::text``
+    # renders the same value as ``+00``. They are one instant and therefore
+    # one record value, not evidence drift.
+    return re.sub(r"([+-]\d{2}):00$", r"\1", normalised)
 
 
 @dataclass

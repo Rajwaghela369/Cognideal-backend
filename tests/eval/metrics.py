@@ -233,3 +233,107 @@ def risk_recall_against_rules(
         "missed": sorted("%s/%s" % k for k in missed),
         "ai_only": sorted("%s/%s" % k for k in (ai - rules)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Risk detection over N runs: task 11.9
+# ---------------------------------------------------------------------------
+#
+# `risk_stability` above compares two runs, which is what task 7.4 needed and
+# all it had (n=2, Jaccard 0.67). Two runs cannot distinguish "the detector
+# wobbles on one risk" from "the detector is bimodal", and 7.4's own note says
+# the figure is worth re-measuring. These two functions take N runs instead.
+#
+# They are kept separate from the pairwise version rather than replacing it:
+# `risk_stability`'s `only_in_a` / `only_in_b` lists are what you read when a
+# single pair disagrees, and collapsing them into an N-run summary would lose
+# the detail that makes a flicker diagnosable.
+
+
+def risk_stability_n(runs: Sequence[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
+    """Risk-key stability across N runs on an unchanged deal.
+
+    Reports three different things, because they fail differently:
+
+    ``mean_pairwise_jaccard`` is comparable to 7.4's two-run number -- the same
+    statistic, averaged over all pairs instead of the single pair that existed.
+
+    ``unanimous_jaccard`` is the harsher one: the keys every run agreed on,
+    over the keys any run produced. With n=2 it equals the pairwise figure; as
+    n grows it falls faster, because one run inventing one key once is enough
+    to drop a key out of the intersection.
+
+    ``per_key`` is the diagnosis. A detector at Jaccard 0.8 because one key
+    appears half the time is a different product problem from one at 0.8
+    because ten keys each appear nine times out of ten, and only this column
+    tells them apart.
+    """
+    if not runs:
+        return {"runs": 0, "mean_pairwise_jaccard": 1.0, "unanimous_jaccard": 1.0,
+                "stable_keys": [], "unstable_keys": [], "per_key": {}}
+
+    sets = [{risk_key(r) for r in run} for run in runs]
+    union = set().union(*sets)
+    intersection = set.intersection(*sets) if sets else set()
+
+    pairs = [
+        (len(a & b) / len(a | b)) if (a | b) else 1.0
+        for i, a in enumerate(sets) for b in sets[i + 1:]
+    ]
+
+    counts = Counter(k for s in sets for k in s)
+    n = len(sets)
+    return {
+        "runs": n,
+        "mean_pairwise_jaccard": round(sum(pairs) / len(pairs), 4) if pairs else 1.0,
+        "unanimous_jaccard": round(len(intersection) / len(union), 4) if union else 1.0,
+        "keys_per_run": [len(s) for s in sets],
+        "stable_keys": sorted("%s/%s" % k for k in intersection),
+        "unstable_keys": sorted("%s/%s" % k for k in (union - intersection)),
+        # appearances / runs, per key -- 1.0 means every run found it.
+        "per_key": {
+            "%s/%s" % k: round(counts[k] / n, 4) for k in sorted(union)
+        },
+    }
+
+
+def verdict_flicker(verdicts_per_run: Sequence[Dict[str, str]]) -> Dict[str, Any]:
+    """Did each open risk get the same verdict every time?
+
+    The number task 11.9 says matters more than Jaccard, and for a reason worth
+    stating: a *proposal* that comes and goes affects a card the human has not
+    seen yet, but a *verdict* that flips moves a card the human is already
+    looking at between "still a problem" and "resolved". The second is the one
+    that reads as brokenness.
+
+    A risk missing from a run is not scored as a flip -- it is scored as a
+    missing verdict and counted separately. Treating absence as disagreement
+    would conflate "the model changed its mind" with "the model said nothing",
+    which have different fixes.
+    """
+    ids = sorted({rid for run in verdicts_per_run for rid in run})
+    n = len(verdicts_per_run)
+    per_risk, flickering, incomplete = {}, [], []
+    for rid in ids:
+        seen = [run[rid] for run in verdicts_per_run if rid in run]
+        distinct = sorted(set(seen))
+        per_risk[rid] = {
+            "verdicts": dict(Counter(seen)),
+            "answered_in": len(seen),
+            "of_runs": n,
+            "stable": len(distinct) == 1,
+        }
+        if len(distinct) > 1:
+            flickering.append(rid)
+        if len(seen) != n:
+            incomplete.append(rid)
+    return {
+        "runs": n,
+        "risks": len(ids),
+        "flickering": sorted(flickering),
+        "flicker_count": len(flickering),
+        # The headline: zero is the pass condition task 11.9 states.
+        "flicker_rate": round(len(flickering) / len(ids), 4) if ids else 0.0,
+        "missing_verdicts": sorted(incomplete),
+        "per_risk": per_risk,
+    }

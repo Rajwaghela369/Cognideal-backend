@@ -37,13 +37,16 @@ from app.models import (
     Deal,
     DealContact,
     DealStageHistory,
+    Evidence,
     ExtractedFact,
     Meeting,
     MeetingAttendee,
     Recommendation,
     Risk,
+    ClaimEvidence,
 )
 from app.models.enums import (
+    ClaimType,
     CommitmentStatus,
     FactStatus,
     RecommendationStatus,
@@ -61,10 +64,20 @@ class Entry:
     handle: str
     source_kind: SourceKind
     text: str
+    # Literal source value stored in `evidence.snippet`. `text` is the richer
+    # line shown to the model; conflating them made every record citation fail
+    # Gate 0 because "stage = discovery" is not the value of `deals.stage`.
+    snippet: str = ""
     record_ref: Optional[dict] = None
     #: Set for a `fact` entry: the fact's own id, so a risk citing it can be
     #: traced to the span the fact rests on rather than to a paraphrase of it.
     fact_id: Optional[uuid.UUID] = None
+    document_id: Optional[uuid.UUID] = None
+    chunk_id: Optional[uuid.UUID] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    speaker: Optional[str] = None
+    occurred_at: Optional[datetime] = None
 
 
 @dataclass
@@ -116,12 +129,18 @@ async def build(db: AsyncSession, deal_id: uuid.UUID) -> Dossier:
     dossier = Dossier(deal_id=deal_id)
     n = [0]
 
-    def add(source_kind, text, record_ref=None, fact_id=None, prefix="r"):
+    def add(source_kind, text, record_ref=None, fact_id=None, prefix="r",
+            snippet=None, document_id=None, chunk_id=None, char_start=None,
+            char_end=None, speaker=None, occurred_at=None):
         n[0] += 1
         handle = "%s%d" % (prefix, n[0])
         dossier.entries[handle] = Entry(
             handle=handle, source_kind=source_kind, text=text,
+            snippet=text if snippet is None else snippet,
             record_ref=record_ref, fact_id=fact_id,
+            document_id=document_id, chunk_id=chunk_id,
+            char_start=char_start, char_end=char_end, speaker=speaker,
+            occurred_at=occurred_at,
         )
         return handle
 
@@ -132,20 +151,22 @@ async def build(db: AsyncSession, deal_id: uuid.UUID) -> Dossier:
     # --- the deal itself. Every value is also a resolvable record_ref, so a
     # risk about the stage cites the stage and self-invalidates when it moves.
     add(SourceKind.RECORD, "stage = %s" % deal.stage.value,
-        _ref("deals", deal.id, "stage"))
+        _ref("deals", deal.id, "stage"), snippet=deal.stage.value)
     if deal.value is not None:
         add(SourceKind.RECORD, "deal value = %s %s" % (deal.value, deal.currency),
-            _ref("deals", deal.id, "value"))
+            _ref("deals", deal.id, "value"), snippet=str(deal.value))
     if deal.expected_close_date:
         days = (deal.expected_close_date - date.today()).days
         add(SourceKind.RECORD,
             "expected_close_date = %s (%d days from today)" % (deal.expected_close_date, days),
-            _ref("deals", deal.id, "expected_close_date"))
+            _ref("deals", deal.id, "expected_close_date"),
+            snippet=str(deal.expected_close_date))
     if deal.last_activity_at:
         quiet = (datetime.now(deal.last_activity_at.tzinfo) - deal.last_activity_at).days
         add(SourceKind.RECORD,
             "last activity %s (%d days ago)" % (str(deal.last_activity_at)[:10], quiet),
-            _ref("deals", deal.id, "last_activity_at"))
+            _ref("deals", deal.id, "last_activity_at"),
+            snippet=str(deal.last_activity_at))
 
     # --- how long in this stage. Computed here, never by the model.
     changed_at = await db.scalar(
@@ -185,7 +206,8 @@ async def build(db: AsyncSession, deal_id: uuid.UUID) -> Dossier:
             "%s %s -- %s, influence %s, attended %d meeting(s)"
             % (contact.first_name, contact.last_name, link.buying_role.value,
                link.influence.value, attended or 0),
-            _ref("deal_contacts", link.id, "buying_role"))
+            _ref("deal_contacts", link.id, "buying_role"),
+            snippet=link.buying_role.value)
 
     unresolved = (
         await db.execute(
@@ -231,7 +253,8 @@ async def build(db: AsyncSession, deal_id: uuid.UUID) -> Dossier:
             "open commitment (%s): %s, due %s%s"
             % (commitment.owner_side.value, commitment.description,
                commitment.due_date, overdue),
-            _ref("commitments", commitment.id, "status"))
+            _ref("commitments", commitment.id, "status"),
+            snippet=commitment.status.value)
 
     # --- the accepted facts. `pending` is excluded: an unreviewed proposal is
     # not something to build a second assertion on top of.
@@ -246,8 +269,32 @@ async def build(db: AsyncSession, deal_id: uuid.UUID) -> Dossier:
             .limit(40)
         )
     ).scalars():
-        add(SourceKind.DERIVED, "%s: %s" % (fact.fact_type, fact.content),
-            fact_id=fact.id, prefix="f")
+        # A fact is a claim, not evidence. Expose the exact source spans behind
+        # it so a downstream risk inherits a real citation rather than citing
+        # the fact's paraphrase as if it were a source.
+        evidence_rows = (await db.execute(
+            select(Evidence)
+            .join(ClaimEvidence, ClaimEvidence.evidence_id == Evidence.id)
+            .where(
+                ClaimEvidence.claim_type == ClaimType.FACT,
+                ClaimEvidence.claim_id == fact.id,
+            )
+        )).scalars()
+        for evidence in evidence_rows:
+            add(
+                evidence.source_kind,
+                "%s: %s — source: %s" % (fact.fact_type, fact.content, evidence.snippet),
+                record_ref=evidence.record_ref,
+                fact_id=fact.id,
+                prefix="f",
+                snippet=evidence.snippet,
+                document_id=evidence.document_id,
+                chunk_id=evidence.chunk_id,
+                char_start=evidence.char_start,
+                char_end=evidence.char_end,
+                speaker=evidence.speaker,
+                occurred_at=evidence.occurred_at,
+            )
 
     # --- what is already open, so resolution can be asked for (task 7.9)
     for risk in (

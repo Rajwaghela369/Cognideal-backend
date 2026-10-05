@@ -22,14 +22,18 @@ from app.models import Account, Deal, Meeting, MeetingAttendee
 from app.models.enums import AnalysisStatus, MeetingStatus
 from app.schemas.v1.deal.meeting import (
     AnalysisRequest,
+    BriefRequest,
     MeetingAnalysis,
     MeetingCreate,
     MeetingDetail,
     MeetingFilters,
     MeetingListItem,
+    MeetingBriefResponse,
     MeetingUpdate,
 )
 from app.services import meeting as meeting_service
+from app.services import analysis as analysis_service
+from app.ai import brief as brief_service
 
 router = APIRouter(prefix="/deals/{deal_id}/meetings", tags=["meetings"])
 
@@ -220,7 +224,35 @@ async def delete_meeting(
     ON DELETE SET NULL in the other direction, and the document is an
     independent record that may already be chunked, embedded and cited.
     """
+    deal_id, meeting_id = meeting.deal_id, meeting.id
+    attendee_ids = list(
+        (
+            await db.scalars(
+                select(MeetingAttendee.id).where(
+                    MeetingAttendee.meeting_id == meeting_id
+                )
+            )
+        ).all()
+    )
     await db.delete(meeting)
+    # The database cascades the attendee rows, but record_ref is JSON rather
+    # than a foreign key. Re-resolve those citations after the cascade flushes
+    # so they become span_missing in this same transaction.
+    for attendee_id in attendee_ids:
+        await analysis_service.reverify_record_refs(
+            db,
+            table="meeting_attendees",
+            row_id=attendee_id,
+            fields=("raw_name", "contact_id", "is_internal", "attended"),
+        )
+    await analysis_service.record_change(
+        db,
+        deal_id,
+        "meeting deleted",
+        table="meetings",
+        row_id=meeting_id,
+        fields=("status", "ended_at"),
+    )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -245,6 +277,7 @@ def _analysis_payload(meeting: Meeting) -> dict:
         "summary": meeting.summary,
         "sentiment": meeting.sentiment,
         "has_transcript": meeting.transcript_document_id is not None,
+        "analysis_error": meeting.analysis_error,
     }
 
 
@@ -278,3 +311,36 @@ async def request_analysis(
     await db.commit()
     await db.refresh(meeting)
     return _analysis_payload(meeting)
+
+
+@router.get("/{meeting_id}/brief", response_model=MeetingBriefResponse)
+async def get_brief(
+    meeting: Meeting = Depends(get_meeting),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    from app.models import MeetingBrief
+
+    brief = await db.scalar(
+        select(MeetingBrief).where(MeetingBrief.meeting_id == meeting.id)
+    )
+    if brief is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brief not generated")
+    return brief
+
+
+@router.post("/{meeting_id}/brief", response_model=MeetingBriefResponse)
+async def generate_brief(
+    body: BriefRequest,
+    meeting: Meeting = Depends(get_meeting),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    try:
+        brief = await brief_service.generate(db, meeting, force=body.force)
+    except Exception as exc:
+        from app.ai.client import AIDisabled
+        if isinstance(exc, AIDisabled):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        raise
+    await db.commit()
+    await db.refresh(brief)
+    return brief

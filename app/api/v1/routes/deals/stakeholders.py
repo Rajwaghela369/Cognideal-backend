@@ -32,6 +32,7 @@ from app.schemas.v1.deal.stakeholder import (
     DealStakeholderUpdate,
 )
 from app.services import deal as deal_service
+from app.services import analysis as analysis_service
 
 router = APIRouter(prefix="/deals/{deal_id}/stakeholders", tags=["stakeholders"])
 
@@ -123,8 +124,18 @@ async def add_stakeholder(
         # end of each statement and cannot be deferred to commit.
         await deal_service.demote_primary_stakeholder(db, deal_id)
 
-    db.add(DealContact(deal_id=deal_id, **payload))
+    link = DealContact(deal_id=deal_id, **payload)
+    db.add(link)
     try:
+        await db.flush()
+        await analysis_service.record_change(
+            db,
+            deal_id,
+            "stakeholder added",
+            table="deal_contacts",
+            row_id=link.id,
+            fields=("buying_role",),
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -152,6 +163,16 @@ async def update_stakeholder(
     for field, value in changes.items():
         setattr(link, field, value)
 
+    relevant = set(changes) & {"buying_role"}
+    if relevant:
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "stakeholder buying role changed",
+            table="deal_contacts",
+            row_id=link.id,
+            fields=relevant,
+        )
     await db.commit()
     return await _one_stakeholder(db, deal.id, contact_id)
 
@@ -165,6 +186,15 @@ async def remove_stakeholder(
     """Removes the link, never the contact -- the person still belongs to the
     account and may be a stakeholder on other deals."""
     link = await deal_service.get_stakeholder_or_404(db, deal.id, contact_id)
+    link_id = link.id
     await db.delete(link)
+    await analysis_service.record_change(
+        db,
+        deal.id,
+        "stakeholder deleted",
+        table="deal_contacts",
+        row_id=link_id,
+        fields=("buying_role",),
+    )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

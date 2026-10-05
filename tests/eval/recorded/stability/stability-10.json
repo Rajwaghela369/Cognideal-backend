@@ -1,0 +1,279 @@
+{
+  "_comment": "Task 11.9. Raw shadow runs, scored by run_stability_eval.score.",
+  "deal": "SecureFlow Enterprise",
+  "recorded_at": "2026-10-02T13:09:21.231238+00:00",
+  "runs": [
+    {
+      "error": "BadRequestError: Error code: 400 - {'error': {'message': \"Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details.\", 'type': 'invalid_request_error', 'code': 'json_validate_failed', 'failed_generation': '{\"risks\":[{\"risk_type\":\"security_review_pending\",\"risk_key\":null,\"title\":\"Security sign\u2011off pending\",\"description\":\"The deal cannot move forward because security sign\u2011off is the critical path, and no evidence it has been obtained.\",\"severity\":\"high\",\"confidence\":0.96,\"evidence_refs\":[\"f11\",\"f17\"],\"recommendation\":{\"action_type\":\"engage_stakeholder\",\"title\":\"Engage security lead\",\"description\":\"Arrange a meeting with the customer\\'s security lead to obtain the required sign\u2011off.\",\"rationale\":\"The dossier notes security sign\u2011off is the critical path (f11) and the conversation cannot proceed until it is completed (f17). Securing this approval is essential to move beyond discovery.\",\"priority\":\"high\",\"evidence_refs\":[\"f11\",\"f17\"]}},\"{\"\"risk_type\":\"unresolved_objection\",\"risk_key\":null,\"title\":\"Architecture sign\u2011off not obtained\",\"description\":\"The customer\\'s team must sign off on the architecture before the deal can be escalated internally, but no sign\u2011off has been recorded.\",\"severity\":\"high\",\"confidence\":0.94,\"evidence_refs\":[\"f15\",\"f16\"],\"recommendation\":{\"action_type\":\"address_objection\",\"title\":\"Secure architecture approval\",\"description\":\"Follow up with the architecture owners to get the required sign\u2011off and document it.\",\"rationale\":\"Both f15 and f16 state that architecture sign\u2011off is required before Priya can take the deal internally, yet no evidence of completion exists.\",\"priority\":\"high\",\"evidence_refs\":[\"f15\",\"f16\"]}},\"{\"\"risk_type\":\"budget_unconfirmed\",\"risk_key\":null,\"title\":\"Budget approval pending\",\"description\":\"The deal value exceeds the $150k threshold that triggers board approval and a competitive process, but no board sign\u2011off or additional bids are documented.\",\"severity\":\"medium\",\"confidence\":0.9,\"evidence_refs\":[\"f13\",\"f19\",\"f26\",\"f27\"],\"recommendation\":{\"action_type\":\"follow_up_email\",\"title\":\"Confirm budget and approval process\",\"description\":\"Email the sponsor to verify board approval status and whether the required competitive bids have been initiated.\",\"rationale\":\"The proposal amount (162k) and Dana\u2019s approval (220k) both exceed the $150k policy (f26) that mandates board sign\u2011off and a multi\u2011vendor bid (f27), yet no confirmation is present.\",\"priority\":\"medium\",\"evidence_refs\":[\"f13\",\"f19\",\"f26\",\"f27\"]}},\"{\"\"risk_type\":\"missed_commitment\",\"risk_key\":null,\"title\":\"SOC\\u202f2 report delivery missed\",\"description\":\"A commitment to deliver the SOC\\u202f2 report by 7\\u202fAugust was not met, and the report is still outstanding.\",\"severity\":\"medium\",\"confidence\":0.93,\"evidence_refs\":[\"f23\"],\"recommendation\":{\"action_type\":\"internal_escalation\",\"title\":\"Escalate SOC\\u202f2 delivery\",\"description\":\"Notify the internal delivery team to prioritize sending the SOC\\u202f2 report immediately.\",\"rationale\":\"The commitment to provide the SOC\\u202f2 report by 7\\u202fAugust (f23) is past due, indicating a missed commitment that could block security sign\u2011off.\",\"priority\":\"high\",\"evidence_refs\":[\"f23\"]}}]\",\"open_risk_verdicts\":[{\"risk_id\":\"6c494675-f8d4-42aa-a799-93ac91f44d2a\",\"verdict\":\"still_present\",\"evidence_refs\":[\"r6\"]},{\"risk_id\":\"f9ef27a4-58f3-4b2e-b690-5778164e7df2\",\"verdict\":\"still_present\",\"evidence_refs\":[\"r5\"]},{\"risk_id\":\"21dc10fb-9ec4-4272-b4ad-df08e1e96ddc\",\"verdict\":\"still_present\",\"evidence_refs\":[\"r3\",\"r1\"]}],\"proactive\":[]}'}}",
+      "proposed": [],
+      "affirmed_open": [],
+      "rejected": [],
+      "rule_risks": [],
+      "recall": null,
+      "missed": [],
+      "ai_only": [],
+      "verdicts": {},
+      "_elapsed_s": 7.5
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 58.7
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 38.8
+    },
+    {
+      "error": "ValueError: structured output failed for task=detect method=json_schema: Failed to parse DetectionOut from completion {\"risks\": [{\"risk_type\": \"security_review_pending\", \"risk_key\": null, \"title\": \"Security sign\\u2011off pending\", \"description\": \"The customer indicated that security sign\\u2011off is the critical path (f11) and Maya has only promised to connect Priya with the security lead (f12); no confirmation of completion is present, leaving the deal blocked on security review.\", \"severity\": \"high\", \"confidence\": 0.9, \"evidence_refs\": [\"f11\", \"f12\"], \"recommendation\": {\"action_type\": \"engage_stakeholder\", \"title\": \"Engage Security Lead\", \"description\": \"Arrange a meeting between Priya and the customer's security lead to obtain the required sign\\u2011off.\", \"rationale\": \"Security sign\\u2011off is cited as the critical path (f11) and the only step taken so far is Maya's promise to connect (f12). Securing that connection and sign\\u2011off is essential to move forward.\", \"priority\": \"high\", \"evidence_refs\": [\"f11\", \"f12\"]}}, \"\", {\"risk_type\": \"missed_commitment\", \"risk_key\": null, \"title\": \"SOC 2 report overdue\", \"description\": \"Maya committed to deliver the SOC 2 report by 7\\u202fAugust (f23), but the current date is late September, meaning the commitment has not been met.\", \"severity\": \"critical\", \"confidence\": 0.95, \"evidence_refs\": [\"f23\"], \"recommendation\": {\"action_type\": \"internal_escalation\", \"title\": \"Escalate SOC 2 Delay\", \"description\": \"Notify internal team that the SOC 2 report due 7\\u202fAugust was not delivered and request immediate provision.\", \"rationale\": \"The commitment to deliver the SOC 2 report by 7\\u202fAugust (f23) is past due, creating a blocker for security review and deal progression.\", \"priority\": \"urgent\", \"evidence_refs\": [\"f23\"]}}, \"\", {\"risk_type\": \"budget_unconfirmed\", \"risk_key\": null, \"title\": \"Board approval not secured\", \"description\": \"The spend exceeds $150\\u202fk (deal value $180\\u202fk, r2) which per policy requires board approval and a competitive process (f26\\u2011f29), yet no evidence of such approval or bids is provided.\", \"severity\": \"high\", \"confidence\": 0.9, \"evidence_refs\": [\"r2\", \"f26\", \"f27\", \"f28\", \"f29\"], \"recommendation\": {\"action_type\": \"address_objection\", \"title\": \"Confirm Board Approval\", \"description\": \"Obtain confirmation that the required board approval and multi\\u2011vendor competitive process for the $180\\u202fk spend have been completed.\", \"rationale\": \"Policy mandates board sign\\u2011off and at least three bids for any spend over $150\\u202fk (f26\\u2011f29); without this, the deal cannot close.\", \"priority\": \"high\", \"evidence_refs\": [\"r2\", \"f26\", \"f27\", \"f28\", \"f29\"]}}, \"\", {\"risk_type\": \"unresolved_objection\", \"risk_key\": null, \"title\": \"Architecture sign\\u2011off pending\", \"description\": \"The customer stated that the team must sign off on the architecture before Priya can proceed internally (f15, f16), and this sign\\u2011off has not yet occurred.\", \"severity\": \"medium\", \"confidence\": 0.85, \"evidence_refs\": [\"f15\", \"f16\"], \"recommendation\": {\"action_type\": \"address_objection\", \"title\": \"Secure Architecture Sign\\u2011off\", \"description\": \"Work with the customer's team to obtain the required architecture sign\\u2011off so the deal can advance.\", \"rationale\": \"Both decision criteria f15 and f16 require architecture sign\\u2011off before internal escalation, which remains outstanding.\", \"priority\": \"medium\", \"evidence_refs\": [\"f15\", \"f16\"]}}], \"open_risk_verdicts\": [{\"risk_id\": \"6c494675-f8d4-42aa-a799-93ac91f44d2a\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r6\"]}, {\"risk_id\": \"f9ef27a4-58f3-4b2e-b690-5778164e7df2\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r5\"]}, {\"risk_id\": \"21dc10fb-9ec4-4272-b4ad-df08e1e96ddc\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r3\", \"r1\"]}], \"proactive\": []}. Got: 3 validation errors for DetectionOut\nrisks.1\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nrisks.3\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nrisks.5\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nFor troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/OUTPUT_PARSING_FAILURE ",
+      "proposed": [],
+      "affirmed_open": [],
+      "rejected": [],
+      "rule_risks": [],
+      "recall": null,
+      "missed": [],
+      "ai_only": [],
+      "verdicts": {},
+      "_elapsed_s": 39.3
+    },
+    {
+      "error": "ValueError: structured output failed for task=detect method=json_schema: Failed to parse DetectionOut from completion {\"risks\": [{\"risk_type\": \"security_review_pending\", \"risk_key\": null, \"title\": \"Security sign\\u2011off pending\", \"description\": \"Security sign\\u2011off is identified as the critical path, but no evidence it has been obtained.\", \"severity\": \"high\", \"confidence\": 0.95, \"evidence_refs\": [\"f11\", \"f12\"], \"recommendation\": {\"action_type\": \"engage_stakeholder\", \"title\": \"Engage Security Lead\", \"description\": \"Schedule a meeting with the customer's security lead to obtain the required sign\\u2011off.\", \"rationale\": \"f11 states security sign\\u2011off is the critical path and f12 only promises Maya will connect Priya with the security lead, indicating the sign\\u2011off has not yet occurred.\", \"priority\": \"high\", \"evidence_refs\": [\"f11\", \"f12\"]}}, \"\", {\"risk_type\": \"unresolved_objection\", \"risk_key\": null, \"title\": \"Architecture sign\\u2011off pending\", \"description\": \"The customer requires internal architecture sign\\u2011off before proceeding, but it has not been completed.\", \"severity\": \"medium\", \"confidence\": 0.9, \"evidence_refs\": [\"f15\", \"f16\"], \"recommendation\": {\"action_type\": \"address_objection\", \"title\": \"Secure Architecture Approval\", \"description\": \"Coordinate with the customer's team to get the architecture signed off.\", \"rationale\": \"Both f15 and f16 note that the team must sign off on the architecture before any internal escalation or further conversation can occur, and no sign\\u2011off has been reported.\", \"priority\": \"medium\", \"evidence_refs\": [\"f15\", \"f16\"]}}, \"\", {\"risk_type\": \"budget_unconfirmed\", \"risk_key\": null, \"title\": \"Budget approval unclear\", \"description\": \"Proposal amount (162k) and approved budget (220k) differ, and spend exceeds the threshold requiring board sign\\u2011off and competitive bids, but no confirmation of those approvals is present.\", \"severity\": \"medium\", \"confidence\": 0.85, \"evidence_refs\": [\"f13\", \"f19\", \"f26\", \"f27\", \"f29\"], \"recommendation\": {\"action_type\": \"follow_up_email\", \"title\": \"Confirm Budget and Process\", \"description\": \"Send a clarification email to verify board approval and the required competitive bidding process.\", \"rationale\": \"f13 gives a proposal of 162k, f19 shows a higher approved amount of 220k, while f26\\u2011f29 outline board and competitive process requirements for spends over 150k, yet no evidence of compliance is provided.\", \"priority\": \"medium\", \"evidence_refs\": [\"f13\", \"f19\", \"f26\", \"f27\", \"f29\"]}}, \"\", {\"risk_type\": \"missed_commitment\", \"risk_key\": null, \"title\": \"Security deliverables overdue\", \"description\": \"Commitments to deliver the SOC 2 report by August 7 and to provide a scoping proposal were not met, indicating missed commitments.\", \"severity\": \"high\", \"confidence\": 0.9, \"evidence_refs\": [\"f23\", \"f24\"], \"recommendation\": {\"action_type\": \"internal_escalation\", \"title\": \"Escalate Missed Deliverables\", \"description\": \"Alert the internal team that the SOC 2 report and scoping proposal are overdue and require immediate action.\", \"rationale\": \"f23 promised the SOC 2 report by the seventh of August and f24 promised a scoping proposal and SOC 2 Type II report, both dates have passed without confirmation of delivery.\", \"priority\": \"high\", \"evidence_refs\": [\"f23\", \"f24\"]}}], \"open_risk_verdicts\": [{\"risk_id\": \"6c494675-f8d4-42aa-a799-93ac91f44d2a\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r6\"]}, {\"risk_id\": \"f9ef27a4-58f3-4b2e-b690-5778164e7df2\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r5\", \"r1\"]}, {\"risk_id\": \"21dc10fb-9ec4-4272-b4ad-df08e1e96ddc\", \"verdict\": \"still_present\", \"evidence_refs\": [\"r3\", \"r1\"]}], \"proactive\": []}. Got: 3 validation errors for DetectionOut\nrisks.1\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nrisks.3\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nrisks.5\n  Input should be a valid dictionary or instance of RiskOut [type=model_type, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/model_type\nFor troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/OUTPUT_PARSING_FAILURE ",
+      "proposed": [],
+      "affirmed_open": [],
+      "rejected": [],
+      "rule_risks": [],
+      "recall": null,
+      "missed": [],
+      "ai_only": [],
+      "verdicts": {},
+      "_elapsed_s": 38.4
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 39.0
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 42.2
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 42.3
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/",
+        "unresolved_objection/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 37.2
+    },
+    {
+      "proposed": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "affirmed_open": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "rejected": [],
+      "rule_risks": [
+        "close_date_at_risk/",
+        "no_economic_buyer/",
+        "stalled_stage/"
+      ],
+      "recall": 1.0,
+      "missed": [],
+      "ai_only": [
+        "budget_unconfirmed/",
+        "missed_commitment/",
+        "security_review_pending/"
+      ],
+      "_recall_note": "proposed + affirmed-as-still-present, vs the six SQL rules",
+      "verdicts": {
+        "6c494675-f8d4-42aa-a799-93ac91f44d2a": "still_present",
+        "f9ef27a4-58f3-4b2e-b690-5778164e7df2": "still_present",
+        "21dc10fb-9ec4-4272-b4ad-df08e1e96ddc": "still_present"
+      },
+      "_elapsed_s": 41.1
+    }
+  ]
+}

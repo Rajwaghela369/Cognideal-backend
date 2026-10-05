@@ -25,6 +25,7 @@ from app.schemas.v1.deal.commitment import (
     CommitmentUpdate,
 )
 from app.services import claims as claims_service
+from app.services import analysis as analysis_service
 from app.services import meeting as meeting_service
 
 router = APIRouter(prefix="/deals/{deal_id}/commitments", tags=["commitments"])
@@ -137,6 +138,15 @@ async def create_commitment(
 
     commitment = Commitment(deal_id=deal.id, origin=Origin.USER, **body.model_dump())
     db.add(commitment)
+    await db.flush()
+    await analysis_service.record_change(
+        db,
+        deal.id,
+        "commitment created",
+        table="commitments",
+        row_id=commitment.id,
+        fields=("status", "due_date"),
+    )
     await db.commit()
     return await _one(db, commitment.id)
 
@@ -165,6 +175,16 @@ async def update_commitment(
     for field, value in changes.items():
         setattr(commitment, field, value)
 
+    relevant = set(changes) & {"status", "due_date"}
+    if relevant:
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "commitment changed",
+            table="commitments",
+            row_id=commitment.id,
+            fields=relevant,
+        )
     await db.commit()
     return await _one(db, commitment_id)
 
@@ -188,5 +208,13 @@ async def delete_commitment(
     commitment = await get_commitment_or_404(db, deal.id, commitment_id)
     await claims_service.delete_claim_links(db, ClaimType.COMMITMENT, [commitment_id])
     await db.delete(commitment)
+    await analysis_service.record_change(
+        db,
+        deal.id,
+        "commitment deleted",
+        table="commitments",
+        row_id=commitment_id,
+        fields=("status", "due_date"),
+    )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

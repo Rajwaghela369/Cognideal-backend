@@ -37,12 +37,13 @@ response and a written claim.
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.callbacks import get_usage_metadata_callback
 from langchain_core.rate_limiters import BaseRateLimiter
@@ -70,6 +71,7 @@ _MAX_TOKENS_BY_TASK = {
     "validate": lambda: settings.ai_max_tokens_validate,
     "detect": lambda: settings.ai_max_tokens_detect,
     "synthesize": lambda: settings.ai_max_tokens_synthesize,
+    "brief": lambda: settings.ai_max_tokens_synthesize,
     "chat": lambda: settings.ai_max_tokens_chat,
 }
 
@@ -289,6 +291,110 @@ def _usage(raw: Any) -> Tuple[Optional[int], Optional[int]]:
     )
 
 
+#: How many stray array elements a salvage will drop before giving up. A
+#: response with more than a couple is not "one bad token", it is a model
+#: that lost the shape, and keeping whatever parsed out of it would be
+#: guesswork presented as data.
+_MAX_SALVAGED_DROPS = 3
+
+
+def _strip_stray_elements(payload: Any) -> Tuple[Any, List[str]]:
+    """Drop non-object elements from lists of objects, recursively.
+
+    The defect this exists for, measured by task 11.9: the model emits a
+    spurious scalar *inside* an array of objects -- a bare ``""`` between two
+    valid risks, or a truncated ``'{""risk_type"'`` -- and the whole response
+    is rejected, discarding two or three perfectly good objects with it. Three
+    detect runs in ten failed this way.
+
+    The rule is deliberately narrow. An element is dropped only when its
+    siblings are objects and it is not, which is exactly the observed shape. A
+    list of scalars is left alone, an object is never repaired field by field,
+    and a missing required field still fails: this recovers a response the
+    model nearly got right, and must not manufacture one it did not.
+    """
+    dropped: List[str] = []
+
+    def walk(node: Any, path: str) -> Any:
+        if isinstance(node, dict):
+            return {k: walk(v, "%s.%s" % (path, k)) for k, v in node.items()}
+        if isinstance(node, list):
+            objects = [i for i in node if isinstance(i, dict)]
+            # Only when the list is *meant* to hold objects: at least one does,
+            # and at least one does not.
+            if objects and len(objects) != len(node):
+                for item in node:
+                    if not isinstance(item, dict):
+                        dropped.append("%s[%r]" % (path, _clip(item)))
+                node = objects
+            return [walk(i, "%s[%d]" % (path, n)) for n, i in enumerate(node)]
+        return node
+
+    return walk(payload, "$"), dropped
+
+
+def _clip(value: Any, limit: int = 40) -> str:
+    text_value = str(value)
+    return text_value if len(text_value) <= limit else text_value[:limit] + "..."
+
+
+def _salvage(schema: Any, raw_json: Optional[str], task: str) -> Tuple[Any, List[str]]:
+    """Re-validate a rejected completion with stray array elements removed.
+
+    Returns ``(None, [])`` when there is nothing to salvage, so the caller
+    raises exactly as it did before. Only ever called on a response that has
+    already failed, so it cannot change the outcome of a good one.
+    """
+    if not raw_json:
+        return None, []
+    try:
+        payload = json.loads(raw_json)
+    except ValueError:
+        # Truncated or otherwise unparseable as JSON at all. Out of scope:
+        # repairing that means guessing where the object ended.
+        return None, []
+
+    cleaned, dropped = _strip_stray_elements(payload)
+    if not dropped or len(dropped) > _MAX_SALVAGED_DROPS:
+        return None, dropped
+    try:
+        return schema.model_validate(cleaned), dropped
+    except Exception as exc:  # noqa: BLE001 -- the salvage simply did not work
+        logger.info("ai.salvage_rejected task=%s error=%s", task, _clip(exc, 160))
+        return None, dropped
+
+
+def _content_of(raw: Any) -> Optional[str]:
+    """The response text, for a completion that arrived and failed validation."""
+    content = getattr(raw, "content", None)
+    if isinstance(content, str):
+        return content
+    # Some providers return content as a list of parts.
+    if isinstance(content, list):
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        ) or None
+    return None
+
+
+def _failed_generation(exc: BaseException) -> Optional[str]:
+    """Groq's rejected completion, when a 400 carries one.
+
+    ``json_validate_failed`` returns the text the model produced in
+    ``error.failed_generation``, which is the only copy -- nothing reaches the
+    LangChain parser at all -- so a salvage has to read it off the exception.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("code") == "json_validate_failed":
+            generation = error.get("failed_generation")
+            if isinstance(generation, str):
+                return generation
+    return None
+
+
 async def _invoke(runnable: Any, messages: Any, run: AIRun, estimated: int) -> Any:
     """One call, governed, with at most ``ai_max_retries`` further attempts."""
     gov = governor()
@@ -458,7 +564,28 @@ async def structured(
     run = AIRun(task=task, model=model or model_for(role), prompt_version=prompt_version)
     estimated = estimate_tokens(_render(messages)) + max_tokens_for(task)
 
-    result = await _invoke(runnable, list(messages), run, estimated)
+    try:
+        result = await _invoke(runnable, list(messages), run, estimated)
+    except Exception as exc:  # noqa: BLE001 -- re-raised unless salvageable
+        # Groq rejects a schema violation up front with `400
+        # json_validate_failed` and hands back the text the model produced.
+        # Nothing reaches the parser below, so this is the only chance to
+        # recover the one case worth recovering: a stray element inside an
+        # array of objects. See `_strip_stray_elements`.
+        parsed, dropped = _salvage(schema, _failed_generation(exc), task)
+        if parsed is None:
+            raise
+        run.outcome = "ok_salvaged"
+        run.extra["salvaged_drops"] = dropped
+        # WARNING, not info: the result is real but incomplete, and a run that
+        # quietly returned fewer risks than the model found is exactly the kind
+        # of thing that should be countable in the logs.
+        logger.warning(
+            "ai.salvaged task=%s source=json_validate_failed dropped=%d %s",
+            task, len(dropped), dropped,
+        )
+        run.log()
+        return parsed, run
 
     raw = result.get("raw") if isinstance(result, dict) else None
     parsed = result.get("parsed") if isinstance(result, dict) else result
@@ -469,6 +596,19 @@ async def structured(
 
     error = result.get("parsing_error") if isinstance(result, dict) else None
     if error is not None or parsed is None:
+        # Same defect, arriving the other way: the completion came back and
+        # failed validation here instead of at Groq. Of the three detect runs
+        # task 11.9 lost, one was the 400 above and two were this.
+        salvaged, dropped = _salvage(schema, _content_of(raw), task)
+        if salvaged is not None:
+            run.outcome = "ok_salvaged"
+            run.extra["salvaged_drops"] = dropped
+            logger.warning(
+                "ai.salvaged task=%s source=parsing_error dropped=%d %s",
+                task, len(dropped), dropped,
+            )
+            run.log()
+            return salvaged, run
         run.outcome = "parse_error"
         run.error = str(error) if error else "parsed output was None"
         run.log()

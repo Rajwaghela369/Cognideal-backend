@@ -20,7 +20,7 @@ Three instructions carry real weight:
     evidence the risk is gone, and resolving on absence makes the panel
     flicker.
 
-The rationale field is where this earns its keep over the four SQL rules. A
+The rationale field is where this earns its keep over the six SQL rules. A
 template can say "engage the economic buyer"; only a model reading the dossier
 can say "Dana Whitfield approved the budget on the 18th but is not a tracked
 contact, so nobody who can sign is on the deal record".

@@ -1,8 +1,8 @@
 """Deterministic risk detection.
 
-Four of the ten `risk_type` values need no model at all -- they are joins over
+Six of the ten `risk_type` values need no model at all -- they are joins over
 tables that already exist. That matters more than it sounds: it means a cited,
-working risk panel ships before any agent does, and it means these four can
+working risk panel ships before any agent does, and it means these six can
 never hallucinate.
 
 Each detected risk gets `evidence` rows with `source_kind='record'` pointing at
@@ -35,6 +35,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Commitment,
     Deal,
     DealContact,
     DealStageHistory,
@@ -46,6 +47,7 @@ from app.models import (
 from app.models.enums import (
     ActionType,
     ClaimType,
+    CommitmentStatus,
     Priority,
     RecommendationStatus,
     RiskStatus,
@@ -54,6 +56,7 @@ from app.models.enums import (
     SourceKind,
 )
 from app.queries import CLOSE_DATE_WARNING_DAYS, CLOSED_STAGES
+from app.core.config import settings
 from app.services import claims as claims_service
 
 # What to do about each kind of risk. The two vocabularies were built to line
@@ -307,16 +310,83 @@ async def _close_date_at_risk(db: AsyncSession, deal: Deal) -> Optional[Finding]
     )
 
 
-RULES = (_no_economic_buyer, _single_threaded, _stalled_stage, _close_date_at_risk)
+async def _missed_commitment(db: AsyncSession, deal: Deal) -> Optional[Finding]:
+    commitment = await db.scalar(
+        select(Commitment)
+        .where(
+            Commitment.deal_id == deal.id,
+            Commitment.status == CommitmentStatus.PENDING,
+            Commitment.due_date.is_not(None),
+            Commitment.due_date < date.today(),
+        )
+        .order_by(Commitment.due_date)
+        .limit(1)
+    )
+    if commitment is None:
+        return None
+    overdue_days = (date.today() - commitment.due_date).days
+    return Finding(
+        risk_type=RiskType.MISSED_COMMITMENT.value,
+        title="Commitment overdue by %d days" % overdue_days,
+        description=commitment.description,
+        severity=Severity.HIGH if overdue_days >= 7 else Severity.MEDIUM,
+        action_title="Follow up on the overdue commitment",
+        rationale="A dated promise passed without being marked complete.",
+        priority=Priority.HIGH if overdue_days >= 7 else Priority.MEDIUM,
+        citations=[(
+            SourceKind.RECORD,
+            commitment.due_date.isoformat(),
+            _ref("commitments", commitment.id, "due_date"),
+        )],
+    )
+
+
+async def _gone_quiet(db: AsyncSession, deal: Deal) -> Optional[Finding]:
+    if deal.last_activity_at is None or deal.stage.value in CLOSED_STAGES:
+        return None
+    quiet_days = (datetime.now(timezone.utc) - deal.last_activity_at).days
+    if quiet_days < settings.gone_quiet_days:
+        return None
+    return Finding(
+        risk_type=RiskType.GONE_QUIET.value,
+        title="No activity in %d days" % quiet_days,
+        description="The deal has had no recorded activity since %s."
+        % deal.last_activity_at.date().isoformat(),
+        severity=(
+            Severity.HIGH
+            if quiet_days >= settings.gone_quiet_days * 2
+            else Severity.MEDIUM
+        ),
+        action_title="Re-engage the customer",
+        rationale="A live deal exceeded the configured quiet-period threshold.",
+        priority=Priority.HIGH,
+        citations=[(
+            SourceKind.RECORD,
+            str(deal.last_activity_at),
+            _ref("deals", deal.id, "last_activity_at"),
+        )],
+    )
+
+
+RULES = (
+    _no_economic_buyer,
+    _single_threaded,
+    _stalled_stage,
+    _close_date_at_risk,
+    _missed_commitment,
+    _gone_quiet,
+)
 
 # What this detector is authoritative about. A risk of any other type was put
 # there by something else, and its absence from this pass says nothing about
-# whether it still holds -- so auto-resolution is scoped to these four.
+# whether it still holds -- so auto-resolution is scoped to this set.
 DETERMINISTIC_TYPES = (
     RiskType.NO_ECONOMIC_BUYER.value,
     RiskType.SINGLE_THREADED.value,
     RiskType.STALLED_STAGE.value,
     RiskType.CLOSE_DATE_AT_RISK.value,
+    RiskType.MISSED_COMMITMENT.value,
+    RiskType.GONE_QUIET.value,
 )
 
 
@@ -346,7 +416,7 @@ async def run(db: AsyncSession, deal: Deal) -> Dict[str, int]:
                 severity=finding.severity.value,
                 status=RiskStatus.OPEN.value,
                 confidence=1.0,  # a SQL rule is not a guess
-                # Empty, always: these four rules only ever produce the known
+                # Empty, always: these rules only ever produce the known
                 # types. The column exists for the AI detector's `other`
                 # (migration 0013), and it has to be named here because it is
                 # now part of the key this ON CONFLICT infers.
@@ -406,7 +476,7 @@ async def run(db: AsyncSession, deal: Deal) -> Dict[str, int]:
     ]
     if detected:
         stale_filter.append(Risk.risk_type.notin_(detected))
-    # Only the four deterministic types: an LLM-detected risk that this pass
+    # Only the deterministic types: an LLM-detected risk that this pass
     # cannot see is not thereby resolved.
     stale_filter.append(Risk.risk_type.in_([f for f in DETERMINISTIC_TYPES]))
     stale = (await db.execute(select(Risk).where(*stale_filter))).scalars().all()

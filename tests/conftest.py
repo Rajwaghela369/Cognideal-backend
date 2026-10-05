@@ -14,6 +14,7 @@ import uuid
 import pytest
 import pytest_asyncio
 
+from app.ai import checkpointer
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.models import Account, Deal
@@ -37,16 +38,68 @@ def _offline(monkeypatch):
     monkeypatch.setattr(settings, "ai_enabled", False)
 
 
+@pytest.fixture(autouse=True)
+def _in_memory_checkpoints(monkeypatch):
+    """Chat tests get LangGraph's in-memory saver, not Postgres.
+
+    A unit test should not create `checkpoints*` tables in the dev database as a
+    side effect, and `AsyncPostgresSaver.setup()` would. Swapped here rather
+    than per test so a new chat test cannot forget and silently start writing
+    them.
+
+    The real saver is exercised deliberately in ``test_checkpointer.py``, which
+    is where a Postgres-specific assertion belongs.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    saver = InMemorySaver()
+
+    async def _saver():
+        return saver
+
+    monkeypatch.setattr(checkpointer, "saver", _saver)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _dispose_engine():
     yield
     await engine.dispose()
+    # The LangGraph checkpointer holds a *second* pool -- psycopg, not asyncpg,
+    # because langgraph-checkpoint-postgres cannot speak asyncpg. It is a
+    # module-level singleton and binds to the loop that opened it, so it is the
+    # same trap as the engine above and needs the same treatment: without this
+    # the first test to build a saver leaves a pool attached to a dead loop,
+    # and the next test that touches chat hangs rather than failing.
+    await checkpointer.close()
 
 
 @pytest_asyncio.fixture
 async def db():
     async with SessionLocal() as session:
         yield session
+
+
+@pytest_asyncio.fixture
+async def client():
+    """An HTTP client speaking to the app in-process.
+
+    ``ASGITransport`` rather than ``TestClient``: the latter runs the app on its
+    own event loop in a worker thread, which collides with the module-level
+    asyncpg pool the same way described at the top of this file -- that is the
+    trap that made it unusable in ``verify_phase0_http.py``. This transport
+    stays on the test's loop, so the app and the ``db`` fixture share one.
+
+    No base_url trickery: requests use the real paths, so a test reads like the
+    route it exercises.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as http:
+        yield http
 
 
 @pytest_asyncio.fixture

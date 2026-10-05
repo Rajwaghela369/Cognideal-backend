@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Deal, ExtractedFact, Task
 from app.models.enums import FactStatus, TaskStatus
 from app.services import activity
+from app.services import analysis as analysis_service
 
 
 async def apply_status_change(db: AsyncSession, task: Task, to_status: TaskStatus) -> None:
@@ -44,6 +45,14 @@ async def apply_status_change(db: AsyncSession, task: Task, to_status: TaskStatu
         await activity.touch_deal(db, task.deal_id)
     elif was_done:
         task.completed_at = None
+
+    await analysis_service.record_change(
+        db,
+        task.deal_id,
+        "task status changed",
+        tier1=True,
+        tier2=False,
+    )
 
 
 async def get_deal_for_task_or_422(db: AsyncSession, deal_id: uuid.UUID) -> Deal:

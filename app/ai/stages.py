@@ -21,8 +21,27 @@ from app.ai import client, detect_ai, extract, reconcile, tiebreak, validate
 from app.ai.prompts import get as get_prompt
 from app.ai.schemas import SentimentOut, SummaryOut
 from app.core.config import settings
-from app.models import Deal, Document, DocumentChunk, ExtractedFact, Meeting
-from app.models.enums import AnalysisStatus, ClaimType, Origin, ValidationMethod
+from app.models import (
+    ClaimEvidence,
+    Commitment,
+    Deal,
+    Document,
+    DocumentChunk,
+    Evidence,
+    ExtractedFact,
+    Meeting,
+    Recommendation,
+)
+from app.models.enums import (
+    ActionType,
+    AnalysisStatus,
+    ClaimType,
+    CommitmentStatus,
+    Origin,
+    RecommendationStatus,
+    SourceKind,
+    ValidationMethod,
+)
 from app.services import claims
 from app.services import facts as facts_service
 from app.services import gate0, gate2, roster
@@ -464,21 +483,28 @@ async def reconcile_commitments(
 ) -> Dict[str, Any]:
     """Stage 7 -- do this call's facts show an open promise was kept?
 
-    Produces **proposals**, and does not write them anywhere yet.
+    Produces **proposals**, and writes each as a `recommendation` with
+    `action_type='correct_record'` and `status='suggested'`. It never changes
+    the commitment itself: closing a promise nobody kept is the error that
+    matters, and `missed_commitment` is only trustworthy if a model cannot
+    silently satisfy the thing it measures. A human accepts, exactly as with
+    every other recommendation.
 
-    The design said a proposal lands as a `recommendation`, and that turns out
-    not to fit: every `ActionType` describes an action to *take* --
-    `schedule_meeting`, `send_document`, `engage_stakeholder` -- and "this
-    commitment now looks satisfied" is a proposed **data correction**, not an
-    action. Filing it under the nearest action would corrupt the
-    `dismissal_reason` and action-type distributions, which are two of the few
-    signals here that are not self-reported.
+    `correct_record` exists because the rest of `ActionType` names an action to
+    *take* -- `schedule_meeting`, `send_document` -- while "this commitment now
+    looks satisfied" is a claim about a row. Filing it under the nearest action
+    would corrupt the action-type and `dismissal_reason` distributions, which
+    are two of the few signals here that are not self-reported. Migration 0015
+    adds the value and `source_commitment_id`; the latter is what keeps this
+    stage from filing a duplicate on every run, since the existing
+    one-live-suggestion index is keyed on `source_risk_id` and a correction has
+    no source risk.
 
-    So the proposals are returned and logged, and the gap is recorded: it needs
-    either an `ActionType` value (a one-line CHECK swap, since the set is
-    `text + CHECK` precisely for this) or a surface of its own. Closing a
-    promise nobody kept is the error that matters, so nothing is written on a
-    guess.
+    Citations are the facts' own evidence rows, re-linked rather than copied.
+    The spans are already in the database and already verified; a second
+    `evidence` row holding the same offsets would be a second thing to keep
+    true. Gate 0 runs again anyway on each link, because this claim is not the
+    one the span was first attached to.
     """
     if not surviving_facts:
         return {"commitment_proposals": []}
@@ -487,11 +513,136 @@ async def reconcile_commitments(
         db, meeting.deal_id, surviving_facts, budget=budget
     )
     for commitment_id, why in proposals:
-        logger.info(
-            "stage7.proposal meeting=%s commitment=%s why=%s (not written -- see docstring)",
-            meeting.id, commitment_id, why[:70],
+        await _file_correction(
+            db,
+            deal_id=meeting.deal_id,
+            commitment_id=commitment_id,
+            why=why,
+            facts=surviving_facts,
         )
     return {"commitment_proposals": proposals}
+
+
+async def _file_correction(
+    db: AsyncSession,
+    *,
+    deal_id: Any,
+    commitment_id: Any,
+    why: str,
+    facts: Sequence[Any],
+) -> Optional[Any]:
+    """Upsert one `correct_record` suggestion for a commitment.
+
+    Upsert, not insert: the partial unique index from 0015 permits one
+    `suggested` row per commitment, and two meetings can both show the same
+    promise kept. The newer reasoning wins and the row keeps its identity, so a
+    dismissal is not bypassed by a re-run -- the same shape as the risk
+    recommendation upsert in `detect_ai.apply`.
+    """
+    commitment = await db.get(Commitment, commitment_id)
+    if commitment is None or commitment.status != CommitmentStatus.PENDING:
+        # Raced with a human marking it, or with another meeting's run. Either
+        # way the proposal is moot and filing it would ask twice.
+        logger.info("stage7.moot deal=%s commitment=%s", deal_id, commitment_id)
+        return None
+
+    existing = await db.scalar(
+        select(Recommendation).where(
+            Recommendation.deal_id == deal_id,
+            Recommendation.source_commitment_id == commitment_id,
+            Recommendation.status == RecommendationStatus.SUGGESTED,
+        )
+    )
+    if existing is None:
+        existing = Recommendation(
+            deal_id=deal_id,
+            source_commitment_id=commitment_id,
+            status=RecommendationStatus.SUGGESTED,
+            origin=Origin.AI,
+        )
+        db.add(existing)
+
+    existing.title = "Commitment may be satisfied: %s" % commitment.description[:180]
+    existing.description = (
+        "This meeting suggests the commitment %r has been met. Accepting marks "
+        "it satisfied; dismissing leaves it open." % commitment.description[:200]
+    )
+    existing.rationale = why
+    existing.action_type = ActionType.CORRECT_RECORD.value
+    existing.model = client.model_for(client.ROLE_PRIMARY)
+    existing.detector_version = get_prompt("reconcile").version
+    await db.flush()
+
+    await _link_fact_evidence(db, deal_id, existing.id, facts)
+    logger.info(
+        "stage7.filed deal=%s commitment=%s recommendation=%s",
+        deal_id, commitment_id, existing.id,
+    )
+    return existing
+
+
+async def _link_fact_evidence(
+    db: AsyncSession,
+    deal_id: Any,
+    recommendation_id: Any,
+    facts: Sequence[Any],
+) -> int:
+    """Point a claim at the evidence its source facts already cite.
+
+    Re-verifies each span through Gate 0 rather than trusting the fact's own
+    link: the verification status on a `claim_evidence` row is about *that*
+    pairing, and a span can have drifted since. Links that already exist are
+    left alone -- the triple is unique, and inserting a duplicate would raise
+    rather than no-op.
+    """
+    fact_ids = [fact.id for fact in facts]
+    if not fact_ids:
+        return 0
+
+    rows = (
+        await db.execute(
+            select(Evidence)
+            .join(ClaimEvidence, ClaimEvidence.evidence_id == Evidence.id)
+            .where(
+                ClaimEvidence.claim_type == ClaimType.FACT,
+                ClaimEvidence.claim_id.in_(fact_ids),
+            )
+        )
+    ).scalars()
+
+    linked = 0
+    for evidence in {row.id: row for row in rows}.values():
+        already = await db.scalar(
+            select(ClaimEvidence.id).where(
+                ClaimEvidence.claim_type == ClaimType.RECOMMENDATION,
+                ClaimEvidence.claim_id == recommendation_id,
+                ClaimEvidence.evidence_id == evidence.id,
+            )
+        )
+        if already is not None:
+            continue
+        # Dispatch on source_kind: an extracted fact usually cites a transcript
+        # span, but Gate 0 has two checks and handing a record ref to the span
+        # one would report `span_missing` on a perfectly good citation.
+        if evidence.source_kind == SourceKind.RECORD:
+            check = await gate0.check_record_ref(db, evidence.record_ref, evidence.snippet)
+        else:
+            check = await gate0.check_document_span(
+                db, evidence.chunk_id, evidence.snippet,
+                evidence.char_start, evidence.char_end,
+            )
+        db.add(
+            ClaimEvidence(
+                claim_type=ClaimType.RECOMMENDATION,
+                claim_id=recommendation_id,
+                evidence_id=evidence.id,
+                verification_status=check.status,
+                verified_at=func.now(),
+            )
+        )
+        linked += 1
+    await db.flush()
+    return linked
 
 
 async def supersede_facts(
@@ -539,10 +690,10 @@ async def redetect_risks(
 ) -> Dict[str, Any]:
     """Stage 12 -- detect risks, now that the facts exist.
 
-    **Both detectors run, in order.** The four SQL rules go first and are the
+    **Both detectors run, in order.** The six SQL rules go first and are the
     floor: they cannot hallucinate, cannot flicker, and cannot be talked out of
     firing by a prompt-injected transcript. The AI pass then finds those keys
-    already open and bumps them rather than duplicating, while adding the six
+    already open and bumps them rather than duplicating, while adding the four
     semantic types SQL cannot express.
 
     Keeping the floor is not a hedge. It is what makes the AI detector
@@ -557,7 +708,9 @@ async def redetect_risks(
 
     if settings.ai_enabled:
         proposals, dossier = await detect_ai.propose(db, meeting.deal_id, budget=budget)
-        applied = await detect_ai.apply(db, meeting.deal_id, proposals, dossier)
+        applied = await detect_ai.apply(
+            db, meeting.deal_id, proposals, dossier, budget=budget
+        )
         outcome.update(
             inserted=len(applied.inserted), bumped=len(applied.bumped),
             suppressed=len(applied.suppressed), resolved=len(applied.resolved),

@@ -92,6 +92,30 @@ class MeetingAnalysis(BaseModel):
     summary: Optional[str] = None
     sentiment: Optional[str] = None
     has_transcript: bool = False
+    #: Which degradable stages failed, and why. Set on a `complete` run as well
+    #: as a failed one -- a meeting whose summary stage died still has its
+    #: facts, and the screen should be able to say so rather than implying the
+    #: analysis was clean. Written by stages.finalize.
+    analysis_error: Optional[str] = None
+
+
+class MeetingBriefResponse(BaseModel):
+    model_config = ORM
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    objectives: Optional[list] = None
+    context_summary: Optional[str] = None
+    key_risks: Optional[list] = None
+    recommended_questions: Optional[list] = None
+    model: Optional[str] = None
+    generated_at: datetime
+
+
+class BriefRequest(BaseModel):
+    model_config = WRITE
+
+    force: bool = False
 
 
 class MeetingAttendee(BaseModel):

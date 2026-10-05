@@ -308,6 +308,13 @@ class ActionType(str, Enum):
     UPDATE_CLOSE_DATE = "update_close_date"
     ADDRESS_OBJECTION = "address_objection"
     INTERNAL_ESCALATION = "internal_escalation"
+    # Not an action to take -- a proposed *data correction*, which is why it
+    # reads oddly beside the others. Stage 7 of the pipeline concludes that an
+    # open commitment now looks satisfied; that is a claim about a row, not
+    # advice. Filing it under the nearest action would corrupt the action-type
+    # and dismissal_reason distributions, so it gets its own value. See
+    # migration 0015 and app/ai/stages.py::reconcile_commitments.
+    CORRECT_RECORD = "correct_record"
 
 
 # --------------------------------------------------------------------------
