@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import DealStage, RiskLevel
 from app.schemas.v1.account import AccountRef
-from app.schemas.common import ORM, WRITE
+from app.schemas.common import ListQuery, ORM, WRITE
 
 
 # --------------------------------------------------------------------------
@@ -174,7 +174,7 @@ DEAL_SORT_KEYS = frozenset(
 )
 
 
-class DealFilters(BaseModel):
+class DealFilters(ListQuery):
     """Every query parameter of GET /deals, as one model.
 
     Bound with ``Annotated[DealFilters, Query()]``, which is what keeps these

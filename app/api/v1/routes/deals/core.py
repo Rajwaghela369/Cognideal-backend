@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
-from app.api.deps import Pagination, get_deal_or_404, paginate, pagination
+from app.api.deps import get_deal_or_404, paginate
 from app.queries import (
     CLOSED_STAGES,
     DAYS_IN_STAGE,
@@ -50,6 +50,7 @@ from app.schemas.v1.deal.core import (
 )
 from app.services import claims as claims_service
 from app.services import deal as deal_service
+from app.services import analysis as analysis_service
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
@@ -159,7 +160,6 @@ def _deal_list_stmt(f: DealFilters) -> Select:
 @router.get("", response_model=Page[DealListItem])
 async def list_deals(
     filters: Annotated[DealFilters, Query()],
-    page: Pagination = Depends(pagination),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """The pipeline table.
@@ -176,15 +176,19 @@ async def list_deals(
     serialisation wrong. Nothing here generates one today (the frontend has no
     codegen step), so this is a note for whoever adds it, not a live problem.
 
-    limit/offset stay outside the model as the shared Pagination dependency:
-    every list endpoint takes them, and they are not filters.
+    limit/offset are fields on DealFilters, via ListQuery. They were a separate
+    `Depends(pagination)` -- which reads better and does not work: this model
+    is validated against the whole query string, so `extra="forbid"` rejected
+    `?limit=2` as an unexpected parameter before the dependency ran, on every
+    paginated endpoint, while the envelope still reported the default limit of
+    50. See `schemas/common.py:ListQuery`.
     """
-    rows, total = await paginate(db, _deal_list_stmt(filters), page)
+    rows, total = await paginate(db, _deal_list_stmt(filters), filters)
     # Raw Rows, not DealListItem instances. FastAPI validates the return value
     # against response_model with from_attributes=True, so building the models
     # here would mean every row is validated twice -- once by us, once by
     # FastAPI on the way out.
-    return {"items": rows, "total": total, "limit": page.limit, "offset": page.offset}
+    return {"items": rows, "total": total, "limit": filters.limit, "offset": filters.offset}
 
 
 # The sort vocabulary is validated in DealFilters, but the expressions live
@@ -323,12 +327,24 @@ async def update_deal(
     stage = changes.pop("stage", None)
     stage_note = changes.pop("stage_note", None)
 
+    relevant_changed = []
     for field, value in changes.items():
+        if field in ("value", "expected_close_date") and getattr(deal, field) != value:
+            relevant_changed.append(field)
         setattr(deal, field, value)
     if stage is not None:
         # Not a plain column write: also appends to deal_stage_history and
         # sets or clears closed_at.
         await deal_service.apply_stage_change(db, deal, stage, note=stage_note)
+    if relevant_changed:
+        await analysis_service.record_change(
+            db,
+            deal.id,
+            "deal.%s" % ",".join(relevant_changed),
+            table="deals",
+            row_id=deal.id,
+            fields=relevant_changed,
+        )
 
     await db.commit()
     return await _deal_detail(db, deal.id)

@@ -27,7 +27,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import Origin, Priority, TaskStatus
-from app.schemas.common import ORM, WRITE
+from app.schemas.common import ListQuery, ORM, WRITE
 
 # --------------------------------------------------------------------------
 # Responses
@@ -138,7 +138,7 @@ TASK_SORT_KEYS = frozenset(
 )
 
 
-class TaskFilters(BaseModel):
+class TaskFilters(ListQuery):
     """Every query parameter of GET /tasks.
 
     Bound with ``Annotated[TaskFilters, Query()]`` so these stay query

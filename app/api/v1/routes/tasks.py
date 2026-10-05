@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from typing_extensions import Annotated
 
-from app.api.deps import Pagination, paginate, pagination
+from app.api.deps import paginate
 from app.queries import IS_OVERDUE, PRIORITY_ORDER
 from app.db.session import get_db
 from app.models import Account, Deal, Task
@@ -32,6 +32,7 @@ from app.schemas.v1.task import (
     TaskUpdate,
 )
 from app.services import task as task_service
+from app.services import analysis as analysis_service
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -129,13 +130,12 @@ def _task_list_stmt(f: TaskFilters) -> Select:
 @router.get("", response_model=Page[TaskListItem])
 async def list_tasks(
     filters: Annotated[TaskFilters, Query()],
-    page: Pagination = Depends(pagination),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """The tasks table."""
-    rows, total = await paginate(db, _task_list_stmt(filters), page)
+    rows, total = await paginate(db, _task_list_stmt(filters), filters)
     # Raw Rows -- response_model validates them once on the way out.
-    return {"items": rows, "total": total, "limit": page.limit, "offset": page.offset}
+    return {"items": rows, "total": total, "limit": filters.limit, "offset": filters.offset}
 
 
 async def _task_detail(db: AsyncSession, task_id: uuid.UUID) -> Any:
@@ -185,6 +185,14 @@ async def create_task(
     task = Task(**payload, status=TaskStatus.OPEN)
     db.add(task)
     await task_service.apply_status_change(db, task, to_status)
+    if to_status == TaskStatus.OPEN:
+        await analysis_service.record_change(
+            db,
+            task.deal_id,
+            "task created",
+            tier1=True,
+            tier2=False,
+        )
     await db.commit()
 
     response.headers["Location"] = f"/tasks/{task.id}"
@@ -225,6 +233,14 @@ async def delete_task(
     `accepted` would strand it.
     """
     await task_service.release_source_fact(db, task)
+    deal_id = task.deal_id
     await db.delete(task)
+    await analysis_service.record_change(
+        db,
+        deal_id,
+        "task deleted",
+        tier1=True,
+        tier2=False,
+    )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

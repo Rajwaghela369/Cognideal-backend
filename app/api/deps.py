@@ -1,37 +1,31 @@
 import uuid
-from dataclasses import dataclass
 from typing import Any, List, Tuple
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
 from app.db.session import get_db
 from app.models import Deal
-
-
-@dataclass(frozen=True)
-class Pagination:
-    limit: int
-    offset: int
-
-
-def pagination(
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> Pagination:
-    return Pagination(limit=limit, offset=offset)
+from app.schemas.common import ListQuery
 
 
 async def paginate(
-    db: AsyncSession, stmt: Select, page: Pagination
+    db: AsyncSession, stmt: Select, page: ListQuery
 ) -> Tuple[List[Any], int]:
     """Run a statement twice: once counted, once windowed.
 
     `order_by(None)` strips the ORDER BY before counting -- sorting a subquery
     whose rows are only being counted is wasted work, and window functions in
     the ordering would otherwise have to be materialised.
+
+    `page` is the endpoint's own filter model, which carries `limit`/`offset`
+    by inheriting `ListQuery`. There is deliberately no `Depends(pagination)`
+    here any more: a second dependency reading the query string cannot
+    coexist with a query-bound filter model that forbids extras -- see
+    `ListQuery`. Removing it rather than leaving it unused is the point, so
+    the next paginated endpoint cannot reintroduce the bug by reaching for it.
     """
     total = await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
     result = await db.execute(stmt.limit(page.limit).offset(page.offset))
