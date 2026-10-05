@@ -30,6 +30,22 @@ class Settings(BaseSettings):
     # value is baked into the column type at migration time. Changing models
     # later means a new column and a full re-embed -- it is not a config-only
     # switch. See docs/schema/README.md section 7.
+    #
+    # Neither value drives any behaviour today, and the model name is worse
+    # than unused.
+    # Nothing in this codebase computes an embedding, so every
+    # `document_chunks.embedding` is NULL and the HNSW index over it is empty;
+    # the only retrieval here is lexical (`content.ilike(...)` in
+    # `app/ai/tools`) plus trigram similarity for supersession candidates.
+    # `text-embedding-3-small` is an OpenAI model, and this project's provider
+    # is Groq, which serves no embeddings endpoint at all -- so the value is
+    # not merely unused, it is unreachable without adding a second vendor.
+    # Nothing reads `embedding_model`; `embedding_dim` is read only by the
+    # column declaration in `app/models/document.py`.
+    #
+    # They stay anyway: the column type depends on `embedding_dim`, and a
+    # dimension with no model name beside it would be a number nobody can
+    # explain. Treat both as a record of the choice, not as live config.
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
 
@@ -137,6 +153,33 @@ class Settings(BaseSettings):
     # meeting starts promptly, high enough that an idle worker is not a
     # busy-loop against Postgres.
     worker_poll_seconds: float = 2.0
+    analysis_debounce_seconds: int = 60
+    analysis_max_debounce_seconds: int = 600
+    analysis_sweep_hours: int = 24
+    gone_quiet_days: int = 21
+    analysis_tier2_suppressed: bool = False
+    # How long a chat turn may sit in `status='streaming'` before the worker
+    # calls it abandoned (task 11.6). Must exceed the longest plausible single
+    # turn: the row is created before inference starts, so too low a value reaps
+    # a stream that is still being written. A ReAct turn with several tool calls
+    # and a throttled bucket can legitimately run minutes.
+    chat_stream_timeout_seconds: int = 900
+
+    # How many trailing messages the chat agent sees. The LangGraph checkpointer
+    # stores the whole thread; this caps only what is sent to the model, via the
+    # `pre_model_hook` in `ai/checkpointer.py` -- so raising it later makes
+    # history the agent already has visible again, rather than needing a
+    # backfill.
+    #
+    # Counted in messages, not turns, and tool traffic counts: one question that
+    # takes three tool calls is roughly eight messages. 14 is about two such
+    # exchanges. The real spend ceiling is `ai_max_tokens_chat` plus RunBudget;
+    # this exists to stop unbounded growth in a long session.
+    chat_history_messages: int = 14
+    # Separate from the SQLAlchemy pool: the checkpointer speaks psycopg, not
+    # asyncpg, so it cannot share one. Small on purpose -- it serves chat turns
+    # only, and each turn holds a connection briefly.
+    chat_checkpoint_pool_size: int = 4
 
     # --- Rate-limit governor ---
     # TIER-DEPENDENT, and getting it wrong defeats the governor entirely. The
