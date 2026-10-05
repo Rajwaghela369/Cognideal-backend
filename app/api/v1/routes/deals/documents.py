@@ -5,6 +5,14 @@ document row exists only when the whole thing succeeded -- extract, chunk,
 store. Anything that fails leaves no row, so every document the API returns is
 usable. That is affordable because embeddings are not computed yet; when search
 lands, the slow step moves to a batch backfill rather than into this request.
+
+PDF and docx extraction does now happen inside the request, so the claim is
+narrower than it was: parsing a text layer is CPU work, bounded only by
+`max_upload_bytes`. It stays synchronous because the alternative is a document
+row that exists before anyone knows whether it could be read, which is the one
+thing the ordering above exists to prevent. If a size limit large enough to
+matter is ever set, this is where the 202-and-poll path would have to go --
+`documents.status` does not exist today, deliberately.
 """
 
 import uuid
@@ -33,6 +41,7 @@ from app.models import Deal, Document, DocumentChunk
 from app.models.enums import DocumentSourceType
 from app.schemas.v1.document import DocumentDetail, DocumentFilters, DocumentListItem
 from app.services import activity, ingest, storage
+from app.services import analysis as analysis_service
 
 router = APIRouter(prefix="/deals/{deal_id}/documents", tags=["documents"])
 
@@ -211,6 +220,19 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Could not store the file; nothing was saved. ({exc})",
+        )
+
+    if source_type == DocumentSourceType.MEETING_TRANSCRIPT:
+        # `record_change`, not a bare `mark_dirty`: the touch_deal above just
+        # advanced last_activity_at, and `gone_quiet` reads that column -- so an
+        # upload that should clear a gone-quiet risk left it standing until the
+        # nightly sweep. Tier 1 is cheap and exhaustive, so run it here like the
+        # other sixteen write paths do.
+        #
+        # No table/row_id/fields: tier 0 re-verifies citations naming a *changed*
+        # record field, and a new document changes no existing row.
+        await analysis_service.record_change(
+            db, deal.id, "meeting transcript uploaded"
         )
 
     document_id = document.id

@@ -20,6 +20,24 @@ pgvector==0.3.6
 # Object storage (S3-compatible; MinIO in docker-compose)
 minio==7.2.15
 
+# --- Document text extraction (app/services/ingest.py) ---
+# Text-layer extraction, not OCR. Both read a file that already contains its
+# text; neither looks at pixels, so a scanned page stays unreadable here and is
+# refused at upload rather than stored as a document with no chunks.
+#
+# pytesseract was the obvious-looking alternative and is the wrong tool: it
+# wraps Tesseract, which rasterises and recognises, so it would throw away a
+# perfectly good text layer, need a system binary plus language data in the
+# image, and return OCR guesses where exact characters were already available.
+# Gate 0 verifies a citation by substring search in the chunk text, so a
+# recognition error there is not a cosmetic problem -- it silently breaks the
+# evidence spine.
+#
+# Legacy `.doc` is readable by neither: it is a binary OLE container, not the
+# zipped XML `.docx` that python-docx opens. Refused explicitly in ingest.py.
+pypdf==5.1.0
+python-docx==1.1.2
+
 # --- AI layer (docs/ai/README.md) ---
 # Unpinned deliberately: the host venv is Python 3.9 and the container is 3.12,
 # so pip resolves a different LangChain major version on each. See
@@ -30,6 +48,17 @@ minio==7.2.15
 langchain
 langchain-groq
 langgraph
+# Chat conversation memory (app/ai/checkpointer.py). Brings psycopg 3 as a
+# *second* Postgres driver: the app talks to Postgres over asyncpg through
+# SQLAlchemy, and langgraph-checkpoint-postgres cannot use an asyncpg
+# connection. Both are therefore required, and `[binary]` avoids needing
+# libpq headers at build time.
+#
+# These tables are not Alembic's -- the saver creates and migrates them itself,
+# and `alembic/env.py`'s `include_object` keeps autogenerate from proposing to
+# drop them.
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 
 # --- Tests ---
 # Unpinned for the same reason as the AI layer above.

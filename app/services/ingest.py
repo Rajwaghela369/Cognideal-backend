@@ -19,6 +19,7 @@ leaves a visible document whose bytes were never written, and every preview
 object storage may hold orphans, never the reverse.**
 """
 
+import io
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,9 +28,12 @@ from fastapi import HTTPException, status
 
 from app.core.config import settings
 
-# Text formats we can extract today. PDF (pypdf) and docx (python-docx) are
-# each one function more and no schema change -- deliberately left until a real
-# file needs them.
+# Formats we can extract today, split by *how* the text comes out: decoding
+# bytes, or asking a library to walk a container. The sets are named for what
+# they admit rather than lumped together as one "readable" list, because the
+# empty mime type belongs in the first group and must never silently admit the
+# second -- a browser that sends no Content-Type for a .pdf should match on the
+# suffix, not fall through to a UTF-8 decode of a binary file.
 TEXT_MIME_TYPES = {
     "text/plain",
     "text/markdown",
@@ -38,6 +42,26 @@ TEXT_MIME_TYPES = {
     "",
 }
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".vtt", ".srt"}
+
+#: Containers holding their own text layer, read by pypdf / python-docx.
+PDF_MIME_TYPES = {"application/pdf"}
+DOCX_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
+PDF_EXTENSIONS = {".pdf"}
+DOCX_EXTENSIONS = {".docx"}
+
+#: Every extension a caller may upload, for the 415 message. Sorted at use.
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS | DOCX_EXTENSIONS
+
+#: Legacy Word. Refused by name rather than by falling through to the generic
+#: 415, because the generic message would list `.docx` one word later and leave
+#: the caller to guess what the difference is. `.doc` is a binary OLE compound
+#: file; python-docx opens zipped XML and cannot read it, and there is no second
+#: library here that can. "Open it in Word and Save As .docx" is the fix, so the
+#: error says that.
+LEGACY_DOC_EXTENSIONS = {".doc"}
+LEGACY_DOC_MIME_TYPES = {"application/msword"}
 
 _PARAGRAPH = re.compile(r"\n\s*\n")
 
@@ -55,23 +79,146 @@ _SPEAKER_TURN = re.compile(
 )
 
 
+def _pdf_text(data: bytes) -> str:
+    """Extract a PDF's text layer, one page per paragraph break.
+
+    Pages are joined with a blank line so `_PARAGRAPH` treats a page boundary
+    as a paragraph boundary. Without it the last sentence of one page and the
+    first of the next become one run of text, and a chunk can quote across a
+    boundary that does not exist in the document.
+
+    **Reading order is the library's, and it is not always the page's.** pypdf
+    emits text in the order the content stream draws it, which for a
+    multi-column page or a table can interleave columns. That matters more here
+    than it would elsewhere: Gate 0 verifies a citation by searching for the
+    quoted span inside the chunk text, so the extracted text *is* the evidence.
+    A scrambled extraction does not fail loudly -- it produces citations that
+    verify against text no human would recognise as a quotation. Single-column
+    documents are safe; anything laid out in columns should be treated as
+    unreviewed until it has been looked at.
+    """
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages = [page.extract_text() or "" for page in reader.pages]
+    except (PdfReadError, OSError, ValueError, KeyError) as exc:
+        # Encrypted, truncated or not actually a PDF. A 415 rather than a 500:
+        # the caller's file is the problem and the caller can act on it.
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Could not read this PDF (%s). It may be encrypted or damaged."
+            % type(exc).__name__,
+        )
+    return "\n\n".join(page.strip() for page in pages if page.strip())
+
+
+def _docx_text(data: bytes) -> str:
+    """Extract a .docx's paragraphs and table cells.
+
+    Tables are included because a requirements matrix or a pricing grid is
+    exactly the kind of thing a deal document carries, and `document.paragraphs`
+    alone silently omits every one of them -- a document that looked extracted
+    but had lost its substance.
+
+    Each cell becomes its own line and each row is tab-joined, which is a lossy
+    rendering of a table and deliberately so: the chunker and Gate 0 work on
+    flat text with offsets, and there is nowhere for structure to live.
+    """
+    import zipfile
+
+    import docx
+    from docx.opc.exceptions import PackageNotFoundError
+
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except (PackageNotFoundError, zipfile.BadZipFile, KeyError, ValueError) as exc:
+        # `BadZipFile` is the one that actually fires for a legacy .doc renamed
+        # to .docx, and it is not a `PackageNotFoundError` -- python-docx lets
+        # zipfile's own error escape. Caught by test, not by reading the docs.
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Could not read this .docx (%s). It may be damaged, or be a "
+            "legacy .doc renamed." % type(exc).__name__,
+        )
+
+    blocks = [p.text.strip() for p in document.paragraphs if p.text.strip()]
+    for table in document.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                blocks.append("\t".join(cells))
+    return "\n\n".join(blocks)
+
+
 def extract_text(filename: str, mime_type: Optional[str], data: bytes) -> str:
     """Decode an uploaded file to text.
 
     Refuses formats it cannot read rather than storing bytes it will never be
     able to chunk -- a document with no chunks can carry no citation, which
     makes it invisible to every part of the product that matters.
+
+    Matching is on mime type **or** suffix, not both, in that order of
+    preference per format. Browsers disagree about the docx mime type and some
+    send nothing at all, so a `.docx` that arrives as
+    `application/octet-stream` is still read; conversely a file named
+    `notes.txt` that is really a PDF fails at the decode below, which is the
+    right place for it to fail.
     """
     suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
-    readable = (mime_type or "").split(";")[0] in TEXT_MIME_TYPES or suffix in TEXT_EXTENSIONS
-    if not readable:
+    mime = (mime_type or "").split(";")[0].strip().lower()
+
+    # Before the generic refusal: `.doc` is a format we know about and cannot
+    # read, which is a different message from one we do not recognise at all.
+    if suffix in LEGACY_DOC_EXTENSIONS or mime in LEGACY_DOC_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                "Legacy .doc files cannot be read. Open it in Word and save as "
+                ".docx, then upload that."
+            ),
+        )
+
+    if mime in PDF_MIME_TYPES or suffix in PDF_EXTENSIONS:
+        text = _pdf_text(data)
+        if not text.strip():
+            # The scanned-page case, and the whole reason this guard is a 415
+            # rather than the 422 an empty .txt gets. `application/pdf` is a
+            # supported media type; *this* PDF carries no text layer, only
+            # pixels. Reading it needs OCR, which this project deliberately
+            # does not do (see requirements.txt), so the honest answer is "wrong
+            # kind of file" and the fix is on the caller's side. Letting it
+            # through would store a document with zero chunks -- present in
+            # every list, citable by nothing.
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=(
+                    "This PDF has no text layer -- it looks scanned. Text "
+                    "recognition is not supported; upload a PDF with "
+                    "selectable text."
+                ),
+            )
+        return text
+
+    if mime in DOCX_MIME_TYPES or suffix in DOCX_EXTENSIONS:
+        text = _docx_text(data)
+        if not text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="File contains no text to chunk",
+            )
+        return text
+
+    if mime not in TEXT_MIME_TYPES and suffix not in TEXT_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=(
                 f"Cannot extract text from {mime_type or suffix or 'this file'}. "
-                f"Supported today: {', '.join(sorted(TEXT_EXTENSIONS))}."
+                f"Supported today: {', '.join(sorted(SUPPORTED_EXTENSIONS))}."
             ),
         )
+
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
