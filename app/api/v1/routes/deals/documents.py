@@ -91,6 +91,47 @@ def _list_stmt(deal_id: uuid.UUID, f: DocumentFilters) -> Select:
     return stmt.order_by(order.nulls_last(), Document.id)
 
 
+async def _meeting_for_transcript(
+    db: AsyncSession, deal_id: uuid.UUID, meeting_id: Optional[uuid.UUID]
+):
+    """Resolve the meeting a transcript is being attached to.
+
+    Both ids are matched, not just the meeting's: fetching by id alone would
+    let a transcript be filed against another deal's meeting through this
+    deal's URL.
+
+    Refuses a meeting that already has a transcript. Replacing one silently
+    would strand every fact extracted from the old document -- they keep a
+    `document_id` pointing at a file the meeting no longer claims, and
+    `should_extract` would then skip the new transcript because that *meeting*
+    already has facts. Deleting the old document first makes that visible.
+    """
+    if meeting_id is None:
+        return None
+
+    from app.models import Meeting
+
+    meeting = await db.scalar(
+        select(Meeting).where(Meeting.id == meeting_id, Meeting.deal_id == deal_id)
+    )
+    if meeting is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting {meeting_id} not found on this deal",
+        )
+    if meeting.transcript_document_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f'"{meeting.title}" already has a transcript. Delete that '
+                f"document first -- replacing it would leave the facts "
+                f"extracted from it pointing at a file this meeting no longer "
+                f"claims."
+            ),
+        )
+    return meeting
+
+
 @router.get("", response_model=List[DocumentListItem])
 async def list_documents(
     filters: Annotated[DocumentFilters, Query()],
@@ -142,6 +183,7 @@ async def upload_document(
     title: Optional[str] = Form(default=None),
     source_type: DocumentSourceType = Form(...),
     occurred_at: Optional[datetime] = Form(default=None),
+    meeting_id: Optional[uuid.UUID] = Form(default=None),
     deal: Deal = Depends(get_deal_or_404),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -157,17 +199,61 @@ async def upload_document(
     transaction stays open across the object upload so a failure rolls back
     both sides with no compensation code, and a crash leaves an orphaned object
     rather than a document whose bytes were never written.
+
+    `meeting_id` attaches the document as that meeting's transcript, which is
+    what makes a meeting analysable -- extraction reads
+    `meeting.transcript_document_id` and nothing else, so a transcript nobody
+    points at is invisible to it. Offered here rather than as a PATCH on the
+    meeting because this is where the user already is, and because it means a
+    transcript is never orphaned in the first place.
+
+    One consequence of UNIQUE(content_hash) being **global** rather than
+    per-deal: a file already stored on *another* deal cannot be stored on this
+    one. That used to answer 200 with the other deal's document, which told the
+    caller "already stored" while this deal got nothing and the `source_type`
+    they chose was silently dropped. It is now a 409 that says so.
     """
     data = await file.read()
     ingest.guard_size(data)
 
+    if meeting_id is not None and source_type != DocumentSourceType.MEETING_TRANSCRIPT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Only a meeting_transcript can be a meeting's transcript. "
+                "Upload this without a meeting, or change the source type."
+            ),
+        )
+    meeting = await _meeting_for_transcript(db, deal.id, meeting_id)
+
     digest = storage.content_hash(data)
-    existing = await db.scalar(
-        select(Document.id).where(Document.content_hash == digest)
-    )
-    if existing is not None:
-        response.status_code = status.HTTP_200_OK
-        return await _detail(db, existing)
+    existing_row = (
+        await db.execute(
+            select(Document.id, Document.deal_id, Document.title).where(
+                Document.content_hash == digest
+            )
+        )
+    ).first()
+    if existing_row is not None:
+        # Same deal: the idempotent re-upload this constraint exists for.
+        if existing_row.deal_id == deal.id:
+            if meeting is not None:
+                meeting.transcript_document_id = existing_row.id
+                await db.commit()
+            response.status_code = status.HTTP_200_OK
+            return await _detail(db, existing_row.id)
+        # Different deal: there is no honest 200 here. Returning the other
+        # deal's row told the caller "already stored" while this deal got
+        # nothing.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"These exact bytes are already stored on another deal, as "
+                f"\"{existing_row.title}\". Document identity is the file's hash "
+                f"and it is global, so the same file cannot be filed twice. "
+                f"Upload a distinct file, or work from the deal that has it."
+            ),
+        )
 
     text = ingest.extract_text(file.filename or "", file.content_type, data)
     chunks = ingest.chunk_document(text)
@@ -221,6 +307,11 @@ async def upload_document(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Could not store the file; nothing was saved. ({exc})",
         )
+
+    if meeting is not None:
+        # Before record_change, so the detector below sees a meeting that has
+        # a transcript rather than one that is still missing it.
+        meeting.transcript_document_id = document.id
 
     if source_type == DocumentSourceType.MEETING_TRANSCRIPT:
         # `record_change`, not a bare `mark_dirty`: the touch_deal above just
