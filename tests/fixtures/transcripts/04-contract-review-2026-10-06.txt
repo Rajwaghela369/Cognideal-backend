@@ -1,0 +1,36 @@
+Dana Whitfield: Let's start with the obvious. We agreed you'd have paper to our legal team by Friday the twentieth of September. It arrived on the twenty-fourth.
+Maya Chen: That's correct and it was my delay. Our legal team held the order form because the fixed-fee professional services scope needed sign-off from our services director, and he was out that week. I should have told you rather than letting the date pass.
+Dana Whitfield: That's the second date you've missed on this deal. I'm not going to make a speech about it, but you should know I've noticed, and so has Tom.
+Maya Chen: Understood.
+Dana Whitfield: Helen has been through the paper. Helen, go ahead.
+Helen Osei: Helen Osei, I'm general counsel here. Three things, and one of them is a problem.
+Helen Osei: First, the easy one. Your MSA is governed by Delaware law. We can live with that.
+Helen Osei: Second, data residency. Clause 8.3 says customer data may be processed in any region where you operate infrastructure. That doesn't work for us. We need a contractual commitment that all Northwind data stays within the EU, including backups and including any subprocessor. Not a policy statement, a clause.
+Maya Chen: We can do EU-only. We run Frankfurt and Dublin, and our data processing addendum already supports regional pinning. I'll have it written into the clause rather than referenced.
+Helen Osei: Good. Third, and this is the problem. Your liability cap is twelve months of fees. For a system that will hold our audit evidence, twelve months is not a defensible number. Our standard for anything touching regulated records is twenty-four months, and I've not had an exception approved below that in four years.
+Maya Chen: Twenty-four months is above what I can approve. I'd have to take that to our general counsel.
+Helen Osei: Then please take it. I want to be clear that this is not a negotiating position I expect to trade away. If the cap stays at twelve months I cannot recommend signature.
+Dana Whitfield: Which means it's a blocker, not a preference. Maya, how long to get an answer?
+Maya Chen: I'll have an answer by Thursday the ninth of October. If it's a yes I'll have revised paper the same day.
+Dana Whitfield: Thursday the ninth. I'm writing that down.
+Tom Alvarez: While we're on paper — procurement needs the signed DPA as a separate executable document, not an annexe. Our records system can't file an annexe against a vendor record.
+Maya Chen: That's straightforward, I'll split it out.
+Priya Raman: I want to flag something before it becomes a surprise. My security sign-off was issued against the architecture you showed us in August. If the EU residency change moves where data is processed, that's an architecture change, and I have to re-review. I'm not trying to create work, but I can't sign off on something I haven't seen.
+Maya Chen: Frankfurt and Dublin were both in the original diagram, so I don't believe anything moves. I'll send you the deployment topology this week so you can confirm that yourself rather than take my word for it.
+Priya Raman: That's all I need. If nothing moves, my sign-off stands.
+Dana Whitfield: Now the part you won't enjoy. Meridian came back to us unprompted last week with a revised number. They're at a hundred and ninety-five thousand for what they're describing as equivalent scope.
+Maya Chen: Is it equivalent?
+Dana Whitfield: Tom thinks not. Tom?
+Tom Alvarez: Their proposal doesn't include the retention module, and the professional services are time and materials with an estimate, which is exactly what I told them we wouldn't accept. So on a like-for-like basis I think they're close to you, not under you. But I can't tell the board that Meridian is more expensive when the headline number is twenty-five thousand lower.
+Dana Whitfield: So I need something I can put next to their number. I'm not asking you to match a quote I don't believe in. I'm asking for something defensible.
+Maya Chen: Let me come back on that with the liability answer on Thursday.
+Dana Whitfield: Here's the constraint you should both be working to. Our Q4 audit fieldwork begins on the fifteenth of November. If the system isn't in production with ninety days of evidence by then, we fail the same finding a second time, and that becomes a disclosure item. Working backwards, that means signature by the seventeenth of October and migration starting the week after.
+Maya Chen: The seventeenth.
+Dana Whitfield: The seventeenth. Not the end of October, not when it's convenient. If we slip past that I will have to look at whether a shorter-term remediation gets us through the audit, and that is a different conversation that doesn't involve you.
+Priya Raman: Can I ask about something unrelated? Marcus wanted the sandbox kept standing through the migration and I don't see it in the order form.
+Maya Chen: It should be there. I'll check, and if it's missing I'll add it before the revised paper goes out.
+Helen Osei: One more from me, minor. Your notice period for termination for convenience is ninety days. Ours is sixty. I'd like sixty but I won't hold signature over it.
+Maya Chen: I'll push for sixty.
+Dana Whitfield: So to summarise. Liability cap answer and revised paper, Thursday the ninth. DPA split out as its own document. EU residency written into clause 8.3. Deployment topology to Priya this week. Sandbox added to the order form. Something defensible on price. Signature by the seventeenth.
+Maya Chen: Agreed on all of it.
+Dana Whitfield: Good. I want to do this deal, Maya. Don't make it difficult for me.

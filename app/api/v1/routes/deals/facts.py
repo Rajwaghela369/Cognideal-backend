@@ -1,7 +1,8 @@
 """Facts the extractor proposed, for a human to accept or reject.
 
-Read-only. Promotion is a separate write path (Gate 3) and does not belong on a
-list endpoint.
+One read and one write. The write is Gate 3 -- see
+`services/facts.apply_decision` for why accepting means two different things
+depending on the category, and why only `commitment` promotes.
 
 The one rule this route must not forget, and therefore does not implement
 itself: a claim whose newest Gate 1 verdict is `contradicted` or `unsupported`
@@ -14,7 +15,7 @@ the response to reveal it.
 import uuid
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import Annotated
@@ -24,8 +25,15 @@ from app.db.session import get_db
 from app.models import ClaimEvidence, Deal, Evidence, ExtractedFact
 from app.models.enums import ClaimType
 from app.queries import quarantine_filter
-from app.schemas.v1.deal.fact import FactEvidence, FactFilters, FactListItem
+from app.schemas.v1.deal.fact import (
+    FactDecision,
+    FactEvidence,
+    FactFilters,
+    FactListItem,
+)
+from app.services import analysis as analysis_service
 from app.services import claims as claims_service
+from app.services import facts as facts_service
 
 router = APIRouter(prefix="/deals/{deal_id}/facts", tags=["facts"])
 
@@ -103,7 +111,69 @@ async def list_facts(
             meeting_id=fact.meeting_id,
             document_id=fact.document_id,
             extracted_at=fact.extracted_at,
+            promoted_to_type=fact.promoted_to_type,
+            promoted_to_id=fact.promoted_to_id,
             evidence=by_fact.get(fact.id, []),
         )
         for fact in facts
     ]
+
+
+@router.patch("/{fact_id}", response_model=FactListItem)
+async def decide_fact(
+    fact_id: uuid.UUID,
+    body: FactDecision,
+    deal: Deal = Depends(get_deal_or_404),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Gate 3. Accept or reject one proposal.
+
+    Both ids are matched, not just the fact's: fetching by id alone would let
+    one deal's URL adjudicate another deal's fact.
+
+    Tiering is the subtle part, and it follows from what actually reads a fact.
+
+    **Tier 2 always.** `dossier.build` selects facts `WHERE status =
+    'accepted'`, so a decision in either direction changes what the AI detector
+    can see -- accepting puts a fact in front of it, rejecting takes one away.
+    It is debounced rather than immediate on purpose: a reviewer works through a
+    queue of twenty, and twenty detector runs where one will do is exactly what
+    the quiet window exists to collapse.
+
+    **Tier 1 only when something promoted.** The deterministic detector never
+    reads `extracted_facts` -- zero references -- so a confirmed `competitor`
+    fact gives it nothing to re-evaluate. A promoted `commitment` does: it
+    writes a `commitments` row, and `missed_commitment` reads that table.
+
+    No `origin` argument, and that matters. `mark_dirty` ignores writes where
+    `origin == Origin.AI`, so passing it here -- on the reasoning that the fact
+    came from the model -- would silently suppress tier 2 and make acceptance
+    have no effect at all. The *decision* is the human's; that is the whole
+    point of this gate.
+    """
+    fact = await db.scalar(
+        select(ExtractedFact).where(
+            ExtractedFact.id == fact_id, ExtractedFact.deal_id == deal.id
+        )
+    )
+    if fact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Fact {fact_id} not found on this deal",
+        )
+
+    promoted = await facts_service.apply_decision(db, fact, body.status)
+
+    await analysis_service.record_change(
+        db,
+        deal.id,
+        "fact %s" % (body.status.value if hasattr(body.status, "value") else body.status),
+        tier1=promoted,
+        tier2=True,
+    )
+    await db.commit()
+
+    decided = await list_facts(
+        FactFilters(fact_type=None, status=None), deal=deal, db=db
+    )
+    return next(item for item in decided if item.id == fact_id)

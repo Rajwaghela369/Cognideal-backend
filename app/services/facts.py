@@ -175,3 +175,134 @@ async def existing_fact_count(
         select(func.count()).select_from(ExtractedFact)
         .where(ExtractedFact.document_id == document_id)
     ) or 0
+
+
+# --------------------------------------------------------------------------
+# Gate 3 -- human adjudication
+#
+# Where correctness is actually resolved. Gates 0-2 decide what a person is
+# allowed to see; a person decides what is true.
+#
+# The schema describes this as promotion into a `commitment` or `task`, and
+# that is right for the categories that name an action. It is not right for the
+# other six: a `competitor` fact ("Meridian quoted 195k") is something to know,
+# not something to do, and there is no table to promote it into. So accepting
+# does one of two things depending on the category:
+#
+#   promote   `commitment` -- creates the commitments row, recorded in
+#             promoted_to_type / promoted_to_id. The only category whose
+#             payload maps onto an existing table unambiguously.
+#   confirm   everything else -- flips `status` to `accepted` and nothing more.
+#
+# "And nothing more" undersells it. `dossier.build` selects facts
+# `WHERE status = 'accepted'`, so confirming is what makes a fact visible to
+# the AI detector at all. A pending fact is inert; a confirmed one is deal
+# context the next analysis pass reasons over. That is the whole value of the
+# gesture for six of the eight categories.
+# --------------------------------------------------------------------------
+
+#: Categories whose acceptance creates a row somewhere else, and where it goes.
+#: Deliberately short. `requirement` is the tempting third entry and is left
+#: out: "they need SCIM provisioning" is a fact about the customer, not work we
+#: promised, and turning it into a task would put words in the user's mouth.
+#: `stakeholder` has an obvious home in `deal_contacts` but the schema does not
+#: sanction that target, and inventing it here would make this module the
+#: authority on a decision that belongs in the schema docs.
+PROMOTION_TARGETS = {"commitment": "commitment"}
+
+
+def _parse_spoken_date(value: Optional[str]):
+    """An ISO date, or nothing.
+
+    Extraction records dates as they were spoken -- "Thursday the ninth",
+    "the fifteenth of November" -- because the snippet must be verbatim. Those
+    are not parseable without a reference year and a calendar, and a guessed
+    due date on a commitment is worse than none: `missed_commitment` measures
+    against it. So only an already-ISO value is taken, and anything else leaves
+    `due_date` null, which the column allows.
+    """
+    if not value:
+        return None
+    from datetime import date as _date
+
+    try:
+        return _date.fromisoformat(value.strip()[:10])
+    except (ValueError, AttributeError):
+        return None
+
+
+async def apply_decision(db: AsyncSession, fact: Any, to_status: Any) -> bool:
+    """Record a human's verdict on a fact. Returns True if it promoted a row.
+
+    Refuses three things, each because the alternative loses information:
+
+    *   a `superseded` fact -- a later extraction already replaced it, and
+        accepting the older claim would leave two live records of the same
+        thing. Supersession is the pipeline's judgement, not a status a human
+        is adjudicating.
+    *   re-deciding a fact that has already promoted -- the commitment it
+        created is a real row that something may already reference. Deleting
+        that row releases the fact back to pending (see
+        `services/task.release_source_fact` for the same rule on tasks), so the
+        honest path is destructive and visible rather than a silent status flip.
+    *   accepting into any status other than accepted/rejected -- `pending` is
+        where a fact starts and `superseded` is the pipeline's to write.
+    """
+    from fastapi import HTTPException, status as http
+    from app.models import Commitment
+    from app.models.enums import FactStatus, Origin, OwnerSide
+
+    if fact.status == FactStatus.SUPERSEDED or fact.status == FactStatus.SUPERSEDED.value:
+        raise HTTPException(
+            status_code=http.HTTP_409_CONFLICT,
+            detail=(
+                "A later extraction superseded this fact. Decide the one that "
+                "replaced it -- accepting this would leave two live records of "
+                "the same claim."
+            ),
+        )
+    if fact.promoted_to_id is not None:
+        raise HTTPException(
+            status_code=http.HTTP_409_CONFLICT,
+            detail=(
+                f"Already accepted, and it created {fact.promoted_to_type} "
+                f"{fact.promoted_to_id}. Delete that record to undo this -- "
+                f"changing the status alone would leave it orphaned."
+            ),
+        )
+
+    wanted = to_status.value if hasattr(to_status, "value") else to_status
+    fact.status = wanted
+
+    if wanted != FactStatus.ACCEPTED.value:
+        return False
+
+    target = PROMOTION_TARGETS.get(
+        fact.fact_type.value if hasattr(fact.fact_type, "value") else fact.fact_type
+    )
+    if target is None:
+        # Confirmed, not promoted. The status change is the whole effect, and
+        # it is what puts this fact in front of the AI detector.
+        return False
+
+    payload = fact.payload or {}
+    side = payload.get("owner_side")
+    commitment = Commitment(
+        deal_id=fact.deal_id,
+        source_fact_id=fact.id,
+        description=payload.get("what") or fact.content,
+        owner_side=side if side in (OwnerSide.US.value, OwnerSide.CUSTOMER.value) else OwnerSide.US,
+        owner_name=payload.get("owner_name"),
+        due_date=_parse_spoken_date(payload.get("date")),
+        # `origin='ai'` on the row: a person approved it, but the model is what
+        # proposed it, and "how much of this record did the model write?" has to
+        # stay answerable.
+        origin=Origin.AI,
+        confidence=fact.confidence,
+    )
+    db.add(commitment)
+    await db.flush()
+
+    fact.promoted_to_type = target
+    fact.promoted_to_id = commitment.id
+    return True
