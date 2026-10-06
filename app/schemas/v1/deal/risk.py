@@ -68,6 +68,27 @@ class EvidenceItem(BaseModel):
     verified_at: Optional[datetime] = None
 
 
+class RecommendationRef(BaseModel):
+    """Minimal recommendation identity, embedded where a row points at one.
+
+    The same shape and purpose as ``AccountRef``: enough to name the thing and
+    link to it, without dragging its whole row along. Used by ``TaskDetail`` to
+    answer "which suggestion did this task come from?".
+
+    ``action_type`` is ``str`` rather than the enum, as every other response
+    here is -- it is a ``text + CHECK`` column precisely because it churns as
+    prompts are tuned, so a closed type on the way out would break a client
+    the day a value is added.
+    """
+
+    model_config = ORM
+
+    id: uuid.UUID
+    title: str
+    action_type: str
+    rationale: Optional[str] = None
+
+
 class RecommendationSummary(BaseModel):
     """The suggested action, as it appears inside a risk card."""
 

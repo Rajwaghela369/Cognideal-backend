@@ -20,7 +20,7 @@ from typing_extensions import Annotated
 from app.api.deps import paginate
 from app.queries import IS_OVERDUE, PRIORITY_ORDER
 from app.db.session import get_db
-from app.models import Account, Deal, Task
+from app.models import Account, Deal, Recommendation, Task
 from app.models.enums import TaskStatus
 from app.schemas.common import Page
 from app.schemas.v1.task import (
@@ -56,6 +56,28 @@ assert set(_SORTS) == set(TASK_SORT_KEYS), (
     f"_SORTS and TASK_SORT_KEYS disagree: {set(_SORTS) ^ set(TASK_SORT_KEYS)}"
 )
 
+# The recommendation a human accepted to create this task, if any.
+#
+# A correlated scalar subquery rather than an outer join, and that is not a
+# style choice. `recommendations.created_task_id` carries no unique constraint,
+# so nothing stops two rows pointing at one task -- and `paginate()` runs the
+# list statement twice, counted and windowed. A join would therefore duplicate
+# the task *and* inflate `total`, which is the multiplication trap
+# `list_accounts` documents for exactly this reason. `limit(1)` means a
+# duplicate degrades to "picks one" instead of corrupting the page.
+#
+# Note the direction: risks.py joins Task to Recommendation safely, because it
+# walks the foreign key forward (many recommendations -> one task). Only the
+# reverse walk can multiply rows.
+_SOURCE_RECOMMENDATION_ID = (
+    select(Recommendation.id)
+    .where(Recommendation.created_task_id == Task.id)
+    .correlate(Task)
+    .limit(1)
+    .scalar_subquery()
+    .label("source_recommendation_id")
+)
+
 # Columns every task read returns, joined up to the deal and account so the
 # cross-deal table has something to label each row with.
 _COLUMNS = (
@@ -70,6 +92,7 @@ _COLUMNS = (
     Task.priority,
     Task.origin,
     IS_OVERDUE.label("is_overdue"),
+    _SOURCE_RECOMMENDATION_ID,
     Task.completed_at,
     Task.created_at,
 )
@@ -139,18 +162,41 @@ async def list_tasks(
 
 
 async def _task_detail(db: AsyncSession, task_id: uuid.UUID) -> Any:
-    stmt = (
-        select(*_COLUMNS, Task.description, Task.source_fact_id, Task.updated_at)
-        .join(Deal, Deal.id == Task.deal_id)
-        .join(Account, Account.id == Deal.account_id)
-        .where(Task.id == task_id)
-    )
+    """One task, with the detail-only columns and its provenance.
+
+    Built from `_base_stmt()` plus `add_columns` rather than a second hand-rolled
+    select: the two used to repeat the Deal/Account joins and their own column
+    lists, so anything added to `_COLUMNS` reached the list and silently missed
+    the detail.
+    """
+    stmt = _base_stmt().add_columns(
+        Task.description, Task.source_fact_id, Task.updated_at
+    ).where(Task.id == task_id)
     row = (await db.execute(stmt)).first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Task {task_id} not found"
         )
-    return row
+
+    # The id is already on the row; the detail view earns the rest of the
+    # recommendation, because "why does this task exist?" is answered by its
+    # rationale rather than by a uuid. A second small query rather than more
+    # correlated subqueries: three more of those on every list row would be
+    # paid by the table that does not use them.
+    source_recommendation = None
+    if row.source_recommendation_id is not None:
+        source_recommendation = (
+            await db.execute(
+                select(
+                    Recommendation.id,
+                    Recommendation.title,
+                    Recommendation.action_type,
+                    Recommendation.rationale,
+                ).where(Recommendation.id == row.source_recommendation_id)
+            )
+        ).first()
+
+    return {**row._mapping, "source_recommendation": source_recommendation}
 
 
 async def get_task_or_404(

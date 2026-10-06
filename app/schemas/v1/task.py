@@ -18,6 +18,14 @@ Columns absent from every request model below, and why:
     source_fact_id  set only by that promotion path (Gate 3)
     created_at      server
     updated_at      server
+
+``source_recommendation_id`` / ``source_recommendation`` are absent from the
+*model* as well as the requests: they are **derived, not stored**. The edge
+already exists as ``recommendations.created_task_id``, and a second column on
+``tasks`` pointing the other way would be a duplicate of one relationship that
+could drift -- the same reason ``is_completed``, ``is_overdue`` and
+``days_in_stage`` are computed rather than kept. See ``routes/tasks.py`` for how
+it is read, and why it is a correlated subquery rather than a join.
 """
 
 import uuid
@@ -28,6 +36,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import Origin, Priority, TaskStatus
 from app.schemas.common import ListQuery, ORM, WRITE
+from app.schemas.v1.deal.risk import RecommendationRef
 
 # --------------------------------------------------------------------------
 # Responses
@@ -57,6 +66,11 @@ class TaskListItem(BaseModel):
     # Open and past due. Computed, not stored -- a stored flag would be wrong
     # every day after the one it was written on.
     is_overdue: bool = False
+    # The recommendation a human accepted to create this task, if any. Derived
+    # from `recommendations.created_task_id`; the id alone, because the list
+    # needs only enough to link. `origin='ai'` is not a substitute: a task
+    # promoted from a fact is also `ai` and has no recommendation.
+    source_recommendation_id: Optional[uuid.UUID] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
 
@@ -79,6 +93,11 @@ class TaskDetail(BaseModel):
     # Present when a human accepted an extracted fact and this task is what it
     # became. Read-only here: the promotion path owns it.
     source_fact_id: Optional[uuid.UUID] = None
+    # The suggestion this task came from. A different provenance path from
+    # `source_fact_id` above: that one is Gate 3 promoting a fact, this one is
+    # a human accepting a recommendation. Both can be null and they are not
+    # alternatives -- a task can have neither.
+    source_recommendation: Optional[RecommendationRef] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
