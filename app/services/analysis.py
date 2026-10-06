@@ -87,11 +87,26 @@ async def reverify_record_refs(
 
 
 async def refresh_deterministic(db: AsyncSession, deal_id: uuid.UUID):
-    """Tier 1: refresh exhaustive SQL risks immediately."""
+    """Tier 1: refresh exhaustive SQL risks immediately.
+
+    ``populate_existing=True`` is load-bearing, not a precaution. Several
+    callers reach here just after ``activity.touch_deal``, whose ORM UPDATE
+    **expires** ``last_activity_at`` on any ``Deal`` already in the session --
+    and a plain ``db.get`` returns that identity-mapped instance without
+    reloading it. The detector's first read of the column would then be an
+    implicit lazy load, which asyncio cannot do outside a greenlet:
+    ``MissingGreenlet``, surfacing as a 500.
+
+    It only bit the callers that had already loaded the Deal (document upload
+    and meeting completion both take it via ``Depends(get_deal_or_404)``);
+    task writes never load it, so their ``db.get`` issued a real SELECT and
+    they worked by accident. Forcing the reload here fixes every call site at
+    once and costs one SELECT the detector was about to need anyway.
+    """
     from app.services import detect
 
     await db.flush()
-    deal = await db.get(Deal, deal_id)
+    deal = await db.get(Deal, deal_id, populate_existing=True)
     if deal is None:
         return None
     return await detect.run(db, deal)
