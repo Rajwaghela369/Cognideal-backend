@@ -28,6 +28,28 @@ settle that on its own -- so the prompt settles it, in a fixed order, and says
 so explicitly. This is not cosmetic: ``objection`` and ``decision_criteria``
 feed *different* downstream rules, so a misfiled statement reaches the wrong
 detector.
+
+**extract@3 addresses the two failure modes a measured run exposed.** Thirty-two
+facts were extracted from one transcript; all thirty-two passed Gate 0, and then
+Gate 1 returned ``partial`` for twenty of them and ``unsupported`` for four.
+
+The first fix is the big one. Those twenty-four were not hallucinations -- the
+*claims* were almost all correct. The citations were fragments: ``"The
+seventeenth."`` for a claim about a signature deadline, ``"I'll split it out"``
+for a claim naming Maya and the DPA. extract@2 said "keep each snippet short",
+and the model over-complied, quoting the clause that triggered the thought
+rather than the one that evidences it. Gate 1 is right to reject those -- a
+claim whose evidence does not contain the claim is exactly what this product
+must not assert -- so the prompt now states the requirement the validator
+actually applies, and shows three real failures from that run.
+
+The second is narrower and was invisible until the per-type counts were read.
+``competitor`` extracted **nothing** from a transcript that names Meridian
+twice, because extract@2 ranked ``budget`` third and ``competitor`` last: "they
+are at a hundred and ninety-five thousand" went down the money branch and the
+rival disappeared. That matters because ``competitor_pressure`` is one of the
+ten risk types, so a named rival produced no signal the detector could use. A
+vendor now outranks the figure quoted beside it.
 """
 
 from app.ai.prompts import Prompt, register
@@ -35,7 +57,7 @@ from app.ai.prompts import Prompt, register
 PROMPT = register(
     Prompt(
         name="extract",
-        version="extract@2",
+        version="extract@3",
         system=(
             "You extract facts from sales call transcripts.\n"
             "\n"
@@ -54,9 +76,28 @@ PROMPT = register(
             "'2026-08-07'. Your `content` may phrase the claim however reads "
             "best, but the snippet is a quotation.\n"
             "\n"
-            "Keep each snippet short -- one sentence or clause, long enough to "
-            "stand alone as evidence and no longer. Do not include the speaker "
-            "label.\n"
+            "THE SNIPPET MUST CONTAIN EVERYTHING THE CLAIM ASSERTS. Every "
+            "name, number and date in your `content` has to appear in the "
+            "snippet you quote. An independent checker reads the snippet and "
+            "the claim side by side, with no transcript and no surrounding "
+            "turns, and asks whether the quote supports the claim. A quote "
+            "that needs the rest of the conversation to make sense fails that "
+            "check and the fact is discarded.\n"
+            "\n"
+            "So these are wrong, even though each claim is true in context:\n"
+            "  claim 'Maya will split the DPA into its own document'\n"
+            "    snippet \"I'll split it out\"              <- names neither\n"
+            "  claim 'signature is required by the seventeenth'\n"
+            "    snippet \"The seventeenth\"                <- no signature\n"
+            "  claim 'Meridian quoted a hundred and ninety-five thousand'\n"
+            "    snippet \"They're at a hundred and ninety-five thousand\"\n"
+            "                                             <- never says Meridian\n"
+            "\n"
+            "In each case quote the earlier sentence that names the thing, or "
+            "quote both sentences, or phrase the claim to match only what the "
+            "quote actually says. Prefer a longer quote over a claim its quote "
+            "cannot carry. Short is good; self-contained is required. Do not "
+            "include the speaker label.\n"
             "\n"
             "Extract only what the transcript states. Do not infer, combine "
             "across speakers, or record what someone is likely to mean. If the "
@@ -85,17 +126,21 @@ PROMPT = register(
             "('we will not sign until...') or as a policy ('anything over X "
             "goes to the board'). A condition is decision_criteria, not an "
             "objection.\n"
-            "  3. budget            if the point of it is a money figure or a "
-            "spending limit.\n"
-            "  4. deadline          if the point of it is a date, and nobody "
+            "  3. competitor        if another vendor is named. A rival and "
+            "their price in one breath is a competitor fact, not a budget one "
+            "-- name the vendor in `payload.party` and put their figure in "
+            "`payload.amount`.\n"
+            "  4. budget            if the point of it is a money figure or a "
+            "spending limit, and no rival vendor is named.\n"
+            "  5. deadline          if the point of it is a date, and nobody "
             "promised it.\n"
-            "  5. objection         if it is a concern or blocker with NO "
+            "  6. objection         if it is a concern or blocker with NO "
             "condition attached -- 'my team hasn't signed off yet' is an "
             "objection; 'we won't sign until my team signs off' is "
             "decision_criteria.\n"
-            "  6. requirement       if it is a capability the product must "
+            "  7. requirement       if it is a capability the product must "
             "have.\n"
-            "  7. stakeholder / competitor as described above.\n"
+            "  8. stakeholder       as described above.\n"
             "\n"
             "Fill only the payload fields that apply to the type and leave the "
             "rest null. For a commitment, owner_side is 'us' if our side "
