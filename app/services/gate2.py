@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ClaimEvidence, Deal, Evidence
 from app.models.enums import ClaimType, VerificationStatus
 
-logger = logging.getLogger("dealpilot.services.gate2")
+logger = logging.getLogger("cognideal.services.gate2")
 
 
 async def mark_stale_claims(

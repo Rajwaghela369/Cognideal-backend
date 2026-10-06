@@ -32,7 +32,7 @@ from app.ai.prompts import get as get_prompt
 from app.models import Commitment, ExtractedFact
 from app.models.enums import CommitmentStatus, FactStatus
 
-logger = logging.getLogger("dealpilot.ai.reconcile")
+logger = logging.getLogger("cognideal.ai.reconcile")
 
 #: How many old facts a supersession decision may choose between. The model
 #: reads the whole list, so this is a prompt-size and attention budget, not a

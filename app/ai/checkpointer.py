@@ -48,7 +48,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import settings
 
-logger = logging.getLogger("dealpilot.ai.checkpointer")
+logger = logging.getLogger("cognideal.ai.checkpointer")
 
 _pool: Optional[AsyncConnectionPool] = None
 _saver: Optional[AsyncPostgresSaver] = None

@@ -51,7 +51,7 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
 )
-logger = logging.getLogger("dealpilot.worker")
+logger = logging.getLogger("cognideal.worker")
 
 _shutdown = asyncio.Event()
 

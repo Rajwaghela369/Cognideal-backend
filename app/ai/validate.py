@@ -28,7 +28,7 @@ from app.ai import client
 from app.ai.prompts import get as get_prompt
 from app.models.enums import Verdict
 
-logger = logging.getLogger("dealpilot.ai.validate")
+logger = logging.getLogger("cognideal.ai.validate")
 
 #: Verdicts that must never render. `contradicted` is evidence of the opposite;
 #: `unsupported` means the citation does not address the claim at all.

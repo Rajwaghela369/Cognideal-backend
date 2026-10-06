@@ -44,7 +44,7 @@ from app.models import Document, Meeting
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-logger = logging.getLogger("dealpilot.ai.graph")
+logger = logging.getLogger("cognideal.ai.graph")
 
 
 def guarded(name: str):

@@ -46,7 +46,7 @@ from app.services import claims
 from app.services import facts as facts_service
 from app.services import gate0, gate2, roster
 
-logger = logging.getLogger("dealpilot.ai.stages")
+logger = logging.getLogger("cognideal.ai.stages")
 
 
 async def parse_transcript(db: AsyncSession, *, meeting: Meeting) -> Dict[str, Any]:

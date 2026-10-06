@@ -28,7 +28,7 @@ from app.models.enums import ChatRole, ChatScope, MessageStatus
 
 def _conversation(turns):
     """`turns` question/answer pairs, oldest first."""
-    messages = [SystemMessage(content="you are dealpilot")]
+    messages = [SystemMessage(content="you are cognideal")]
     for i in range(turns):
         messages.append(HumanMessage(content="q%d" % i))
         messages.append(AIMessage(content="a%d" % i))

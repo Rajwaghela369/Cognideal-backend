@@ -54,7 +54,7 @@ from app.models.enums import (
     SourceKind,
 )
 
-logger = logging.getLogger("dealpilot.ai.dossier")
+logger = logging.getLogger("cognideal.ai.dossier")
 
 
 @dataclass

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "DealPilot API"
+    app_name: str = "CogniDeal API"
     api_prefix: str = "/api"
     debug: bool = True
 

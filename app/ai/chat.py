@@ -27,7 +27,7 @@ from app.models.enums import (
 )
 from app.services import claims, gate0
 
-logger = logging.getLogger("dealpilot.ai.chat")
+logger = logging.getLogger("cognideal.ai.chat")
 # Handles as the model writes them. ASCII brackets are what the prompt asks
 # for, but the bracket is the model's choice of glyph and it does not always
 # choose ours: a real turn emitted `【e4】【e5】【e6】` -- fullwidth CJK brackets
@@ -107,7 +107,7 @@ async def stream_turn(
         else "This is a global pipeline conversation."
     )
     prompt = (
-        "You are DealPilot, an evidence-grounded sales copilot. Use the read-only "
+        "You are CogniDeal, an evidence-grounded sales copilot. Use the read-only "
         "tools for factual claims. Tool results contain evidence handles such as e3. "
         "Cite every factual assertion inline as [e3], using only handles returned by "
         "tools. Clearly label advice or inference as such. Never claim a write occurred. "

@@ -19,7 +19,7 @@ from app.ai import client
 from app.ai.prompts import get as get_prompt
 from app.services.roster import Candidate, Resolution
 
-logger = logging.getLogger("dealpilot.ai.tiebreak")
+logger = logging.getLogger("cognideal.ai.tiebreak")
 
 
 class SpeakerMatch(BaseModel):

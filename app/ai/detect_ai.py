@@ -55,7 +55,7 @@ from app.models.enums import (
 from app.services import claims as claims_service, gate0
 from app.models.enums import ClaimType, SourceKind, ValidationMethod
 
-logger = logging.getLogger("dealpilot.ai.detect")
+logger = logging.getLogger("cognideal.ai.detect")
 
 DETECTOR_VERSION = "detect@1"
 

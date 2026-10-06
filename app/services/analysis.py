@@ -14,7 +14,7 @@ from app.models.enums import Origin, SourceKind
 from app.services import gate0
 
 _tier2_suppressed: ContextVar[bool] = ContextVar(
-    "dealpilot_tier2_suppressed", default=False
+    "cognideal_tier2_suppressed", default=False
 )
 
 

@@ -28,7 +28,7 @@ from app.models import ExtractedFact
 from app.models.enums import ClaimType, FactStatus, SourceKind
 from app.services import claims, gate0
 
-logger = logging.getLogger("dealpilot.services.facts")
+logger = logging.getLogger("cognideal.services.facts")
 
 
 @dataclass

@@ -27,7 +27,7 @@ from app.ai.prompts import get as get_prompt
 from app.ai.schemas import ExtractedFactOut, ExtractionResult, narrow_payload
 from app.core.config import settings
 
-logger = logging.getLogger("dealpilot.ai.extract")
+logger = logging.getLogger("cognideal.ai.extract")
 
 #: Why a model-reported fact was dropped before it reached Gate 0.
 UNLOCATABLE = "snippet_not_found"

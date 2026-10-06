@@ -52,7 +52,7 @@ from langchain_groq import ChatGroq
 from app.core.config import settings
 from app.ai.governor import RateLimitGovernor, estimate_tokens
 
-logger = logging.getLogger("dealpilot.ai")
+logger = logging.getLogger("cognideal.ai")
 
 # Whether the installed langchain-groq can request Groq's strict mode. Probed
 # once rather than pinned to a version string: the answer is "does this
