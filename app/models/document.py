@@ -62,7 +62,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    # Object key in MinIO, not a URL: documents/{content_hash}. NOT NULL
+    # Object key in object storage, not a URL: documents/{content_hash}. NOT NULL
     # because a document row only exists once its bytes are stored -- there is
     # no half-ingested state to represent.
     storage_uri: Mapped[str] = mapped_column(Text, nullable=False)

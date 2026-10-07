@@ -1,11 +1,11 @@
 """Turning an uploaded file into a document and its chunks.
 
-The ordering here is the design, not an implementation detail. MinIO and
+The ordering here is the design, not an implementation detail. Object storage and
 Postgres cannot share a transaction, so what a crash leaves behind depends
 entirely on the sequence:
 
     extract text -> split chunks -> INSERT (flush, NOT committed)
-                                 -> PUT to MinIO
+                                 -> PUT to object storage
                                  -> COMMIT
 
 The Postgres transaction stays open across the upload. If the upload fails,

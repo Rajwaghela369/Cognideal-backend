@@ -1,0 +1,17 @@
+Maya Chen: Thanks everyone. The goal today is to go through the security questionnaire section by section and leave with a clear list of what is still open. Daniel, do you want to start with the sections you flagged?
+Daniel Okafor: Sure. Sections one to three are fine. Access control, logging and incident response all read well. My questions are on section four, encryption, and section seven, the business associate agreement.
+Kevin Marsh: On encryption, I need to know where the keys live. We cannot have patient-adjacent audit data encrypted with keys we do not control.
+Maya Chen: We support customer-managed keys through your own key management service. The keys never leave your account, and revoking them makes the data unreadable on our side within minutes.
+Kevin Marsh: That is what I wanted to hear. Can you put that in the questionnaire answer, with the key rotation interval?
+Maya Chen: Yes. I will update section four with the customer-managed key design and the ninety day rotation default.
+Rachel Lindqvist: My concern is retention. Our compliance program requires six years for anything touching access to clinical systems. Your standard plan says seven years of archive, which is fine, but I need it to be deletable at six on request.
+Maya Chen: Retention is configurable per data class, so we can set clinical access logs to six years exactly and keep everything else at the default.
+Rachel Lindqvist: Good. Then the BAA is the remaining item. We will not sign a BAA from a vendor template. It has to be on our paper.
+Maya Chen: That is common in healthcare. Send me your BAA and I will get it to our counsel. I will draft our comments for your legal review within the week.
+Daniel Okafor: One more thing, and I want to be direct. Gregory Hale signs anything above two hundred and fifty thousand, and this is above that. He has not been in any of these calls.
+Maya Chen: That is fair, and I would rather hear it now. I have an executive alignment call on the calendar for next week. Would it help if you joined it so he hears the security story from you rather than from me?
+Daniel Okafor: Yes, I will join. He will ask about cost against the current SIEM, so bring the comparison.
+Kevin Marsh: And Epic integration. If the integration needs more than a couple of weeks of my team's time, that will come up.
+Maya Chen: Our Epic connector is standard and usually takes three to five days to configure. I will include the plan in the deck for Gregory.
+Daniel Okafor: Then the next steps are the updated questionnaire, the BAA comments, and the CFO call.
+Maya Chen: Correct. I will have the questionnaire back to you by the end of the week.

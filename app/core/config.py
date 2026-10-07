@@ -1,8 +1,44 @@
 from typing import List, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from typing_extensions import Annotated
+
+
+def _rewrite_postgres_url(url: str, scheme: str, renames: dict, drop: tuple = ()) -> str:
+    """Swap the scheme and translate query parameters between driver dialects."""
+    parts = urlsplit(url)
+    query = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key in drop:
+            continue
+        query.append((renames.get(key, key), value))
+    return urlunsplit((scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def asyncpg_url(url: str) -> str:
+    """Any Postgres URL -> the form SQLAlchemy's asyncpg dialect accepts.
+
+    Providers hand out libpq URLs (``postgresql://...?sslmode=require&
+    channel_binding=require`` is Neon's). SQLAlchemy passes every query
+    parameter to ``asyncpg.connect()`` as a keyword, and asyncpg has no
+    ``sslmode`` or ``channel_binding`` keyword -- it raises on both. asyncpg's
+    own name for the SSL mode is ``ssl``, with the same values; it does not
+    support channel binding, so that one is dropped rather than renamed.
+    """
+    return _rewrite_postgres_url(
+        url, "postgresql+asyncpg", {"sslmode": "ssl"}, drop=("channel_binding",)
+    )
+
+
+def psycopg_url(url: str) -> str:
+    """The same database as a libpq URL, for psycopg (the chat checkpointer).
+
+    The inverse of :func:`asyncpg_url`: libpq rejects both the ``+asyncpg``
+    dialect suffix and asyncpg's ``ssl`` parameter.
+    """
+    return _rewrite_postgres_url(url, "postgresql", {"ssl": "sslmode"})
 
 
 class Settings(BaseSettings):
@@ -23,6 +59,9 @@ class Settings(BaseSettings):
     cors_origins: Annotated[List[str], NoDecode] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     # --- Database ---
+    # Accepts the URL exactly as the provider gives it (Neon's libpq form
+    # included); `_normalize_database_url` turns it into the asyncpg form the
+    # app uses, and `psycopg_database_url` derives the checkpointer's.
     database_url: str = "postgresql+asyncpg://dealpilot:change-me@localhost:5433/dealpilot"
 
     # --- Embeddings ---
@@ -50,24 +89,28 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
 
     # --- Object storage ---
-    # Uploaded documents live in MinIO. A document row exists only once its
-    # bytes are stored, so this is not optional infrastructure.
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "dealpilot"
-    minio_secret_key: str = "change-me"
-    minio_bucket: str = "dealpilot-documents"
-    minio_secure: bool = False
+    # Uploaded documents live in S3-compatible object storage (Neon's, in
+    # production). A document row exists only once its bytes are stored, so
+    # this is not optional infrastructure.
+    #
+    # The endpoint may be a bare host (`host[:port]`, with `s3_secure` choosing
+    # the scheme) or a full URL such as the provider's
+    # `https://<id>.storage...neon.tech`, in which case the scheme wins.
+    s3_endpoint: str = "localhost:9000"
+    s3_access_key: str = "dealpilot"
+    s3_secret_key: str = "change-me"
+    s3_bucket: str = "dealpilot-documents"
+    s3_secure: bool = False
     # The host a presigned preview URL is signed for. Presigned URLs embed the
     # host they were signed against, and the browser is what opens them -- so
-    # signing with the compose service name produces links that resolve only
-    # inside the network and 404 for the user.
-    minio_public_endpoint: str = "localhost:9000"
+    # this must be reachable from the browser. Unset means "same as
+    # s3_endpoint", which is right whenever the backend and the browser reach
+    # storage by the same public host.
+    s3_public_endpoint: Optional[str] = None
     # Supplied rather than discovered. The client otherwise makes a live
-    # `?location=` request to resolve the bucket's region before signing --
-    # which, for the public endpoint, means the backend trying to reach
-    # localhost:9000 inside its own container. Presigning should be pure
-    # computation; naming the region keeps it that way.
-    minio_region: str = "us-east-1"
+    # `?location=` request to resolve the bucket's region before signing.
+    # Presigning should be pure computation; naming the region keeps it so.
+    s3_region: str = "us-east-1"
 
     # --- Ingest ---
     # Chunks are immutable and citations point into them, so what matters is
@@ -206,6 +249,15 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        return asyncpg_url(value)
+
+    @property
+    def psycopg_database_url(self) -> str:
+        return psycopg_url(self.database_url)
 
 
 settings = Settings()

@@ -34,8 +34,8 @@ called on first use rather than at import.
 
 **A second Postgres driver.** The app talks to Postgres over asyncpg via
 SQLAlchemy; ``langgraph-checkpoint-postgres`` requires psycopg 3 and will not
-accept an asyncpg connection. Both now ship. :func:`_conninfo` strips
-SQLAlchemy's ``+asyncpg`` dialect suffix, which psycopg cannot parse.
+accept an asyncpg connection. Both now ship. :func:`_conninfo` converts the
+asyncpg-form URL back to libpq's, which psycopg can parse.
 """
 
 import logging
@@ -55,13 +55,13 @@ _saver: Optional[AsyncPostgresSaver] = None
 
 
 def _conninfo() -> str:
-    """``postgresql+asyncpg://...`` -> ``postgresql://...``.
+    """``postgresql+asyncpg://...?ssl=`` -> ``postgresql://...?sslmode=``.
 
-    SQLAlchemy's URL carries the driver in the scheme; psycopg reads the same
-    string and rejects the suffix. One setting, two consumers, rather than a
-    second URL in config that could drift from the first.
+    SQLAlchemy's URL carries the driver in the scheme and asyncpg's own SSL
+    parameter name; psycopg rejects both. One setting, two consumers, rather
+    than a second URL in config that could drift from the first.
     """
-    return settings.database_url.replace("+asyncpg", "")
+    return settings.psycopg_database_url
 
 
 async def saver() -> AsyncPostgresSaver:

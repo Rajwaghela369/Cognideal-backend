@@ -1,0 +1,13 @@
+Maya Chen: Thanks for taking the call, Hannah, and thanks for bringing Victor. Your demo request mentioned store systems, so I would love to hear what is driving the interest.
+Hannah Cole: We run point of sale and inventory systems in a little over three hundred stores. When something changes on a till or a store server, we have no reliable record of who changed it or when.
+Victor Nguyen: It came up after a pricing incident in the spring. A configuration change pushed the wrong prices to forty stores, and it took us two days to work out where the change came from.
+Maya Chen: That is exactly the problem we solve. Every change is captured with the user, the device and the before and after values. How are you handling it today?
+Hannah Cole: Mostly spreadsheets and a ticketing system. People are supposed to log changes, but they do not always do it.
+Maya Chen: Who would be involved in deciding on a tool like this?
+Hannah Cole: I would own it day to day. Victor owns the infrastructure budget, but anything above fifty thousand needs approval from our CIO.
+Victor Nguyen: And honestly, we have a lot on this year. We are in the middle of a network refresh, so I cannot promise this gets attention before the new year.
+Maya Chen: That is helpful to know. Would a smaller first phase, maybe fifty stores, be easier to fit in?
+Victor Nguyen: Possibly. It depends on the cost, and on how much of my team's time it needs.
+Maya Chen: The store agent deploys through your existing device management, so for fifty stores it is usually a few days of effort. I will send a recap with a phased proposal and the effort estimate.
+Hannah Cole: Please do. I will share it with the CIO once I have read it.
+Maya Chen: Great. I will send the recap by Friday and follow up the week after to see where it has landed.

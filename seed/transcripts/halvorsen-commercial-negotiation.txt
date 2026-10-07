@@ -1,0 +1,15 @@
+Maya Chen: Thanks both for making time. Sofie, good to finally meet you. Ingrid tells me the security review closed out last week, so I thought it was the right moment to talk through the commercials together.
+Ingrid Solberg: It did. Lars signed off on the load test and my team finished the questionnaire. From a security standpoint we are ready to proceed.
+Sofie Brandt: Which is why I am here. I have read the proposal. The number is two hundred and forty thousand euros a year, and I want to understand what we get for that and what happens to it in year two.
+Maya Chen: That figure covers all four EU hubs, twelve months of hot retention, seven years of archive, and the integration package Lars's team asked for. Year two is where I expect your question is going.
+Sofie Brandt: It is. Our policy is that any software commitment over two hundred thousand needs a three-year price lock, or a capped uplift. Without one of those I cannot take it to the board.
+Maya Chen: We can do a thirty-six month term with the uplift capped at four percent a year. I would need the full term committed up front to offer that.
+Sofie Brandt: Four percent is acceptable. I would want the cap written into the order form, not a side letter.
+Maya Chen: Agreed. I will send a revised order form with the three-year pricing and the cap in the main body by Thursday.
+Ingrid Solberg: One thing from my side. Our DPA still has two open clauses with your legal team, the sub-processor notice period and our audit rights. Legal will not let me sign until those are closed.
+Maya Chen: Understood. I will chase our counsel today and get you an answer on both before the order form lands, so you can review them together.
+Sofie Brandt: What is the timing on your side? Is there anything that pushes this past month end?
+Maya Chen: Not from us. If the DPA closes this week and the order form is agreed, we can have a signature call in about a week and start onboarding the first hub straight after.
+Ingrid Solberg: That works. Our regulator audit is in the first quarter, and I want the first two hubs live before Christmas.
+Sofie Brandt: Then send the paperwork and I will review it as soon as it arrives. If the cap is in the contract I do not expect any surprises from finance.
+Maya Chen: Perfect. I will book the signature call for next week and send the invite to all three of us.
