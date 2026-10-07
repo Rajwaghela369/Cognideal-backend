@@ -11,7 +11,7 @@ The frontend lives in its own repository, **cognideal-frontend**.
 | API | FastAPI, SQLAlchemy 2 (async), Alembic |
 | Database | Postgres 16 with pgvector and pg_trgm (Neon in production) |
 | Object storage | Any S3-compatible store (Neon in production) |
-| AI | LangChain / LangGraph on Groq |
+| AI | LangChain / LangGraph on OpenAI (gpt-4o, gpt-4o-mini) |
 
 ## Layout
 
@@ -67,7 +67,8 @@ that must be set outside local development:
 | `S3_BUCKET` | bucket created in the Neon console |
 | `CORS_ORIGINS` | the frontend's URL |
 | `DEBUG` | `false` |
-| `AI_ENABLED` / `GROQ_API_KEY` | to turn the AI layer on |
+| `AI_ENABLED` / `OPENAI_API_KEY` | to turn the AI layer on |
+| `AI_TOKENS_PER_MINUTE` | your OpenAI tier's gpt-4o limit (default 30000) |
 
 `DATABASE_URL` is converted for both Postgres drivers the app uses (asyncpg
 for the API, psycopg for chat memory), so Neon's `sslmode` and

@@ -8,31 +8,28 @@ should find this file and ``app/core/config.py`` and nothing else.
 Three things this module owns:
 
 *   **Role -> model.** Tasks ask for ``primary`` or ``cheap``, never for
-    ``openai/gpt-oss-120b``. A task that names a model has to be edited when
-    the model changes; a task that names a role never does.
-*   **Structured output.** ``method="json_schema"`` is Groq's Structured Output
-    API. Whether that means *guaranteed* adherence depends on the installed
-    client -- see the note below. ``docs/ai/README.md`` section 7 has the two
-    standing consequences: every field must be required, and structured output
-    cannot be combined with streaming or tool use.
+    ``gpt-4o``. A task that names a model has to be edited when the model
+    changes; a task that names a role never does.
+*   **Structured output.** ``method="json_schema"`` with ``strict`` is OpenAI's
+    Structured Outputs -- constrained decoding, so the schema is guaranteed.
+    ``docs/ai/README.md`` section 7 has the two standing consequences: every
+    field must be required, and structured output cannot be combined with
+    streaming or tool use.
 *   **Accounting.** Every call returns an :class:`AIRun` beside its result and
     logs one structured line. ``docs/schema/README.md`` section 10 deliberately
     has no ``ai_runs`` table, so this log *is* the run record.
 
-``langchain_groq`` is imported normally, at module scope. Nothing in
+``langchain_openai`` is imported normally, at module scope. Nothing in
 ``app.main`` imports this package, so the API is unaffected either way; what
 gates a model call is :func:`_require_enabled` -- ``ai_enabled`` plus a key --
 not the availability of the import.
 
-**Constrained decoding is version-dependent.** ``method="json_schema"`` is
-Groq's Structured Output API, but only its ``strict: true`` mode uses
-constrained decoding and therefore guarantees the schema. langchain-groq 0.3.8
-(what pip resolves on Python 3.9) builds ``response_format`` without ``strict``
-and has no parameter to set it, so there the mode is best-effort: valid JSON,
-adherence not guaranteed. 1.x adds ``strict``. :data:`_SUPPORTS_STRICT` picks
-the stronger mode where it exists, which means the *validation* below is not
-belt-and-braces -- on 0.3.8 it is the only thing standing between a malformed
-response and a written claim.
+**The provider moved from Groq to OpenAI**, and the tasks did not notice: they
+name roles, and the one Groq-specific knob they pass -- ``reasoning_effort``,
+tuned per task for gpt-oss -- is forwarded only to models that accept it (see
+:func:`_accepts_reasoning_effort`). gpt-4o rejects it with a 400, so on the
+default models it is simply dropped; point a role at a reasoning model and the
+per-task tuning applies again without touching a call site.
 """
 
 import asyncio
@@ -47,19 +44,27 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.callbacks import get_usage_metadata_callback
 from langchain_core.rate_limiters import BaseRateLimiter
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 from app.ai.governor import RateLimitGovernor, estimate_tokens
 
 logger = logging.getLogger("cognideal.ai")
 
-# Whether the installed langchain-groq can request Groq's strict mode. Probed
-# once rather than pinned to a version string: the answer is "does this
-# function take this argument", and asking directly cannot drift.
+# Whether the installed langchain-openai can request strict mode. Probed once
+# rather than pinned to a version string: the answer is "does this function
+# take this argument", and asking directly cannot drift.
 _SUPPORTS_STRICT = (
-    "strict" in inspect.signature(ChatGroq.with_structured_output).parameters
+    "strict" in inspect.signature(ChatOpenAI.with_structured_output).parameters
 )
+
+# Model families that take `reasoning_effort`. Anything else -- gpt-4o,
+# gpt-4o-mini -- answers it with `400 Unrecognized request argument`.
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
+
+
+def _accepts_reasoning_effort(model: str) -> bool:
+    return model.split("/")[-1].startswith(_REASONING_MODEL_PREFIXES)
 
 # Roles, not sizes. docs/ai/README.md section 7 assigns them.
 ROLE_PRIMARY = "primary"
@@ -165,20 +170,20 @@ def governor() -> RateLimitGovernor:
     global _governor
     if _governor is None:
         _governor = RateLimitGovernor(
-            max_concurrency=settings.groq_max_concurrency,
-            tokens_per_minute=settings.groq_tokens_per_minute,
-            requests_per_minute=settings.groq_requests_per_minute,
+            max_concurrency=settings.ai_max_concurrency,
+            tokens_per_minute=settings.ai_tokens_per_minute,
+            requests_per_minute=settings.ai_requests_per_minute,
         )
     return _governor
 
 
 def model_for(role: str) -> str:
     if role == ROLE_PRIMARY:
-        return settings.groq_model_primary
+        return settings.ai_model_primary
     if role == ROLE_CHEAP:
-        return settings.groq_model_cheap
+        return settings.ai_model_cheap
     if role == ROLE_CHALLENGER:
-        return settings.groq_model_challenger
+        return settings.ai_model_challenger
     raise ValueError("unknown role %r" % role)
 
 
@@ -190,8 +195,8 @@ def max_tokens_for(task: str) -> int:
 def _require_enabled() -> None:
     if not settings.ai_enabled:
         raise AIDisabled("ai_enabled is false")
-    if not settings.groq_api_key:
-        raise AIDisabled("GROQ_API_KEY is not set")
+    if not settings.openai_api_key:
+        raise AIDisabled("OPENAI_API_KEY is not set")
 
 
 def chat_model(
@@ -202,7 +207,7 @@ def chat_model(
     model: Optional[str] = None,
     rate_limiter: Optional[BaseRateLimiter] = None,
 ):
-    """Build a configured ``ChatGroq``.
+    """Build a configured ``ChatOpenAI``.
 
     ``max_retries=0`` on purpose. LangChain's own retry would re-send without
     passing back through the governor, which is precisely the behaviour that
@@ -212,32 +217,39 @@ def chat_model(
     ``temperature=0``: every task here is extraction, classification or
     entailment. None of them wants sampling variance, and stability across runs
     is a product requirement (docs/ai/README.md section 10, the flicker metric).
+
+    ``stream_usage=True``: OpenAI omits token usage from a streamed response
+    unless asked, and the chat agent streams -- without it ``track_usage``
+    would charge every chat turn as zero tokens.
     """
     _require_enabled()
 
+    name = model or model_for(role)
     kwargs: Dict[str, Any] = {
-        "model": model or model_for(role),
-        "api_key": settings.groq_api_key,
+        "model": name,
+        "api_key": settings.openai_api_key,
         "temperature": 0,
         "max_tokens": max_tokens_for(task),
         "timeout": settings.ai_request_timeout_seconds,
         "max_retries": 0,
+        "stream_usage": True,
     }
-    # Only the gpt-oss models accept it; passing it to another model is a 400.
-    if reasoning_effort is not None:
+    if reasoning_effort is not None and _accepts_reasoning_effort(name):
         kwargs["reasoning_effort"] = reasoning_effort
+        # Reasoning models reject any temperature but the default.
+        del kwargs["temperature"]
     # Left unset for the `structured` path, which takes from the same bucket
     # itself -- attaching it there would charge every request twice.
     if rate_limiter is not None:
         kwargs["rate_limiter"] = rate_limiter
-    return ChatGroq(**kwargs)
+    return ChatOpenAI(**kwargs)
 
 
 def _is_retryable(exc: BaseException) -> bool:
     """Whether one more attempt is worth making.
 
     Matched loosely and on purpose: the exception type depends on which
-    langchain-groq version pip resolved, so keying on a concrete class would
+    langchain-openai version pip resolved, so keying on a concrete class would
     silently stop retrying after an upgrade. A 4xx that is not 429 is the
     caller's fault and retrying it only burns budget.
     """
@@ -257,7 +269,7 @@ _RETRY_AFTER = re.compile(r"try again in ([0-9.]+)s", re.IGNORECASE)
 def _retry_after(exc: BaseException, attempt: int) -> float:
     """How long to wait, preferring the server's own answer.
 
-    A 429 from Groq says exactly when the window reopens -- "Please try again
+    A 429 says exactly when the window reopens -- "Please try again
     in 13.3575s" -- and a flat one-second backoff ignores it, retries into the
     same exhausted window and burns the attempt. The hint is read from the
     `retry-after` header when the exception carries one and from the message
@@ -379,11 +391,14 @@ def _content_of(raw: Any) -> Optional[str]:
 
 
 def _failed_generation(exc: BaseException) -> Optional[str]:
-    """Groq's rejected completion, when a 400 carries one.
+    """A provider's rejected completion, when a 400 carries one.
 
-    ``json_validate_failed`` returns the text the model produced in
+    Groq's ``json_validate_failed`` returns the text the model produced in
     ``error.failed_generation``, which is the only copy -- nothing reaches the
     LangChain parser at all -- so a salvage has to read it off the exception.
+    OpenAI's strict mode never produces this error (decoding is constrained),
+    so on the current provider this returns None and the salvage path below,
+    on ``parsing_error``, is the one that matters.
     """
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
@@ -476,7 +491,7 @@ class GovernorRateLimiter(BaseRateLimiter):
     """The governor's request ceiling, in the shape LangChain understands -- task 3.9.
 
     For calls that never pass through :func:`structured`: a runnable invoked
-    inside a graph node, or an agent's own loop. ``ChatGroq(rate_limiter=...)``
+    inside a graph node, or an agent's own loop. ``ChatOpenAI(rate_limiter=...)``
     is the only hook that reaches those.
 
     **Requests only.** ``BaseRateLimiter.acquire(*, blocking)`` takes no
@@ -556,7 +571,7 @@ async def structured(
     }
     if _SUPPORTS_STRICT and settings.structured_output_method == "json_schema":
         # Constrained decoding. Silently absent on 0.3.8 -- see the module
-        # docstring; do not pass it blind, it would reach Groq as an unknown
+        # docstring; do not pass it blind, it would reach the API as an unknown
         # top-level parameter.
         structured_kwargs["strict"] = True
     runnable = llm.with_structured_output(schema, **structured_kwargs)
@@ -567,8 +582,8 @@ async def structured(
     try:
         result = await _invoke(runnable, list(messages), run, estimated)
     except Exception as exc:  # noqa: BLE001 -- re-raised unless salvageable
-        # Groq rejects a schema violation up front with `400
-        # json_validate_failed` and hands back the text the model produced.
+        # A provider that rejects a schema violation up front (Groq's `400
+        # json_validate_failed`) hands back the text the model produced.
         # Nothing reaches the parser below, so this is the only chance to
         # recover the one case worth recovering: a stray element inside an
         # array of objects. See `_strip_stray_elements`.
@@ -597,7 +612,7 @@ async def structured(
     error = result.get("parsing_error") if isinstance(result, dict) else None
     if error is not None or parsed is None:
         # Same defect, arriving the other way: the completion came back and
-        # failed validation here instead of at Groq. Of the three detect runs
+        # failed validation here instead of at the provider. Of the three detect runs
         # task 11.9 lost, one was the 400 above and two were this.
         salvaged, dropped = _salvage(schema, _content_of(raw), task)
         if salvaged is not None:

@@ -76,9 +76,9 @@ class Settings(BaseSettings):
     # `document_chunks.embedding` is NULL and the HNSW index over it is empty;
     # the only retrieval here is lexical (`content.ilike(...)` in
     # `app/ai/tools`) plus trigram similarity for supersession candidates.
-    # `text-embedding-3-small` is an OpenAI model, and this project's provider
-    # is Groq, which serves no embeddings endpoint at all -- so the value is
-    # not merely unused, it is unreachable without adding a second vendor.
+    # `text-embedding-3-small` is an OpenAI model, and OpenAI is now the
+    # provider, so a backfill is reachable -- but nothing has been written to
+    # compute one.
     # Nothing reads `embedding_model`; `embedding_dim` is read only by the
     # column declaration in `app/models/document.py`.
     #
@@ -124,22 +124,23 @@ class Settings(BaseSettings):
     # Off by default so the app boots with no key present: enabling AI must
     # never be a prerequisite for the 48 endpoints that do not use it.
     ai_enabled: bool = False
-    groq_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
 
-    # Named `groq_model_*` rather than `model_*` because Pydantic reserves the
+    # Named `ai_model_*` rather than `model_*` because Pydantic reserves the
     # `model_` prefix and warns on every field that uses it.
     #
-    # Roles, not sizes -- see docs/ai/README.md section 7. The challenger is
-    # for the eval harness only: it is Preview tier and several times the price
-    # of the primary, so it must never appear in the pipeline.
-    groq_model_primary: str = "openai/gpt-oss-120b"
-    groq_model_cheap: str = "openai/gpt-oss-20b"
-    groq_model_challenger: str = "qwen/qwen3.8-27b"
+    # Roles, not sizes -- see docs/ai/README.md section 7. Primary does the
+    # extraction, validation and detection that claims rest on; cheap does the
+    # small classifications (titles, name tiebreaks). The challenger is for the
+    # eval harness only and never appears in the pipeline.
+    ai_model_primary: str = "gpt-4o"
+    ai_model_cheap: str = "gpt-4o-mini"
+    ai_model_challenger: str = "gpt-4o"
 
-    # `json_schema` is Groq's Structured Output API: constrained decoding, so
-    # schema adherence is guaranteed at the token level. Configurable because
-    # older langchain-groq releases -- which is what pip resolves on Python 3.9
-    # -- predate it and accept only `json_mode` or `function_calling`.
+    # `json_schema` is OpenAI's Structured Outputs: with `strict` it is
+    # constrained decoding, so schema adherence is guaranteed at the token
+    # level. Configurable as an escape hatch (`function_calling`) should a
+    # model without Structured Outputs ever be configured.
     structured_output_method: str = "json_schema"
 
     ai_request_timeout_seconds: float = 120.0
@@ -225,19 +226,19 @@ class Settings(BaseSettings):
     chat_checkpoint_pool_size: int = 4
 
     # --- Rate-limit governor ---
-    # TIER-DEPENDENT, and getting it wrong defeats the governor entirely. The
-    # published table (console.groq.com/docs/models) quotes the *Developer*
-    # plan at 250K TPM; the free `on_demand` tier is **8,000 TPM** for
-    # openai/gpt-oss-120b. Set 31x too high the bucket never throttles, and the
-    # first symptom is a 429 storm part-way through a pipeline run -- precisely
-    # what the governor exists to prevent.
+    # TIER-DEPENDENT, and getting it wrong defeats the governor entirely. OpenAI
+    # sets limits per model and per usage tier (platform.openai.com ->
+    # Settings -> Limits); the defaults below are gpt-4o at Tier 1, the
+    # tightest of the two models configured. Set too high, the bucket never
+    # throttles and the first symptom is a 429 storm part-way through a
+    # pipeline run -- precisely what the governor exists to prevent.
     #
     # The authoritative number is on every response as `x-ratelimit-limit-tokens`.
     # Reading it from there would remove this setting, and is the obvious
     # improvement.
-    groq_max_concurrency: int = 2
-    groq_tokens_per_minute: int = 8_000
-    groq_requests_per_minute: int = 30
+    ai_max_concurrency: int = 4
+    ai_tokens_per_minute: int = 30_000
+    ai_requests_per_minute: int = 500
     # A single pipeline run may not spend more than this, whatever it thinks it
     # needs. Bounds the cost of a prompt bug to one run.
     ai_token_ceiling_per_run: int = 200_000

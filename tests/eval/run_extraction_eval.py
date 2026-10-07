@@ -335,8 +335,8 @@ async def live(models, prompt_name, out_dir, repeat=1):
     from app.core.config import settings
     from app.db.session import SessionLocal
 
-    if not settings.ai_enabled or not settings.groq_api_key:
-        raise SystemExit("ai_enabled is off or GROQ_API_KEY is unset -- use --replay")
+    if not settings.ai_enabled or not settings.openai_api_key:
+        raise SystemExit("ai_enabled is off or OPENAI_API_KEY is unset -- use --replay")
 
     prompt = get_prompt(prompt_name)
     labels = load_labels()
@@ -397,9 +397,9 @@ async def live(models, prompt_name, out_dir, repeat=1):
 
 def _model_for(role, settings):
     return {
-        "primary": settings.groq_model_primary,
-        "cheap": settings.groq_model_cheap,
-        "challenger": settings.groq_model_challenger,
+        "primary": settings.ai_model_primary,
+        "cheap": settings.ai_model_cheap,
+        "challenger": settings.ai_model_challenger,
     }[role]
 
 

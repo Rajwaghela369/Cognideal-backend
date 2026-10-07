@@ -39,14 +39,13 @@ pypdf==5.1.0
 python-docx==1.1.2
 
 # --- AI layer (docs/ai/README.md) ---
-# Unpinned deliberately: the host venv is Python 3.9 and the container is 3.12,
-# so pip resolves a different LangChain major version on each. See
-# docs/ai/TASKS.md task 0.9 -- the container is the runtime of record. On 3.9
-# pip resolves langchain 0.3.30 / langchain-groq 0.3.8 / langgraph 0.6.11, which
-# supports everything this layer uses except Groq's strict mode (README section 7).
-# langchain-groq is the only place a provider SDK enters the project.
+# Unpinned deliberately: the host venv is Python 3.9 and the deployment is
+# 3.12, so pip resolves a different LangChain major version on each. See
+# docs/ai/TASKS.md task 0.9. On 3.9 pip resolves langchain-openai 0.3.35, which
+# supports strict Structured Outputs. langchain-openai is the only place a
+# provider SDK enters the project (app/ai/client.py).
 langchain
-langchain-groq
+langchain-openai
 langgraph
 # Chat conversation memory (app/ai/checkpointer.py). Brings psycopg 3 as a
 # *second* Postgres driver: the app talks to Postgres over asyncpg through

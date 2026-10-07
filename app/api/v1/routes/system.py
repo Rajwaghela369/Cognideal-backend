@@ -65,7 +65,7 @@ async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
     # Reading the bucket must not charge it, so this goes through the read-only
     # property rather than take().
     available = client.governor().tokens_available
-    capacity = settings.groq_tokens_per_minute
+    capacity = settings.ai_tokens_per_minute
     deficit = max(0.0, capacity - available)
     # The bucket refills at capacity/60 tokens per second.
     seconds_to_full = round(deficit / (capacity / 60.0), 1) if capacity else 0.0
@@ -73,11 +73,11 @@ async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
     return {
         "config": {
             "enabled": settings.ai_enabled,
-            "model_primary": settings.groq_model_primary,
-            "model_cheap": settings.groq_model_cheap,
+            "model_primary": settings.ai_model_primary,
+            "model_cheap": settings.ai_model_cheap,
             "tokens_per_minute": capacity,
-            "requests_per_minute": settings.groq_requests_per_minute,
-            "max_concurrency": settings.groq_max_concurrency,
+            "requests_per_minute": settings.ai_requests_per_minute,
+            "max_concurrency": settings.ai_max_concurrency,
             "debounce_seconds": settings.analysis_debounce_seconds,
             "max_debounce_seconds": settings.analysis_max_debounce_seconds,
             "sweep_hours": settings.analysis_sweep_hours,

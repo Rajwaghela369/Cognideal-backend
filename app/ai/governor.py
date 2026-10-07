@@ -1,6 +1,6 @@
 """Client-side rate limiting.
 
-Groq's Developer plan allows 250K tokens and 1K requests per minute per model.
+The provider caps tokens and requests per minute, per model and per usage tier.
 The extraction fan-out (one structured call per chunk window, run in parallel)
 is what reaches that first, and the failure mode without a ceiling is a 429
 storm in the middle of a pipeline run -- retried requests spending the very
@@ -9,15 +9,15 @@ budget that is exhausted.
 So the ceiling is enforced here, before the request leaves. Three limits, all
 of which must be satisfied:
 
-*   **concurrency** -- a plain semaphore, because Groq's per-request latency is
-    low and unbounded fan-out buys nothing.
+*   **concurrency** -- a plain semaphore, because fan-out past a few
+    requests in flight buys nothing but 429s.
 *   **tokens per minute** -- a leaky bucket refilled continuously rather than
     reset on a minute boundary. A boundary reset lets a burst spend the whole
     minute's budget in one second, which is exactly the shape that 429s.
 *   **requests per minute** -- the same bucket, counting requests.
 
-Token cost has to be *estimated* before the call, since Groq exposes no
-token-counting endpoint. The estimate is deliberately crude and deliberately
+Token cost has to be *estimated* before the call, without a round trip to
+the provider. The estimate is deliberately crude and deliberately
 high; ``reconcile`` corrects the bucket afterwards from the usage the response
 actually reports, so a persistent bias self-cancels within a few requests
 instead of accumulating.

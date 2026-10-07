@@ -113,9 +113,9 @@ async def live(deal_name, n):
     from app.db.session import SessionLocal
     from app.models import Deal
 
-    if not settings.ai_enabled or not settings.groq_api_key:
+    if not settings.ai_enabled or not settings.openai_api_key:
         raise SystemExit(
-            "ai_enabled is off or GROQ_API_KEY is unset -- this task needs live "
+            "ai_enabled is off or OPENAI_API_KEY is unset -- this task needs live "
             "calls. Use --replay to re-score a saved run."
         )
 
@@ -131,7 +131,7 @@ async def live(deal_name, n):
         # MissingGreenlet rather than simply refetching.
         deal_id, deal_label = deal.id, deal.name
         print("deal %s (%s), %d runs, model %s\n" % (
-            deal_label, deal_id, n, settings.groq_model_primary))
+            deal_label, deal_id, n, settings.ai_model_primary))
 
         for i in range(1, n + 1):
             started = time.monotonic()

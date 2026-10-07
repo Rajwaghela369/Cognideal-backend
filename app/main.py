@@ -28,7 +28,7 @@ def create_app() -> FastAPI:
         pointed at `/api/v1/health` would break the day v2 lands, which is the
         opposite of what the probe is for.
 
-        **Deliberately does not check Groq.** `ai_enabled`, the token bucket and
+        **Deliberately does not check the model provider.** `ai_enabled`, the token bucket and
         the queue depth belong to `GET /api/v1/system/ai-status`. If a provider
         outage made this endpoint fail, `restart: unless-stopped` would restart a
         perfectly healthy API in a loop -- and the REST layer genuinely does

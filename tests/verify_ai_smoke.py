@@ -6,11 +6,11 @@ ambiguous when a later failure happens:
 
     1. is the key valid?
     2. is the model id right for this account?
-    3. does Groq's json_schema structured output work here?
+    3. does OpenAI's strict json_schema structured output work here?
 
-Run from `backend/` with AI_ENABLED=true and GROQ_API_KEY set:
+Run from the repo root with AI_ENABLED=true and OPENAI_API_KEY set:
 
-    ../deal-pilot-env/bin/python tests/verify_ai_smoke.py
+    .venv/bin/python tests/verify_ai_smoke.py
 """
 
 import asyncio
@@ -27,7 +27,7 @@ TEXT = "Northwind Logistics signed for $180,000 after the security review."
 
 
 class Extracted(BaseModel):
-    """Every field required: Groq's strict mode permits no optional keys, so a
+    """Every field required: strict mode permits no optional keys, so a
     "not found" answer is an empty string rather than an absent field."""
 
     company: str = Field(description="The company name, exactly as written")

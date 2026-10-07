@@ -13,7 +13,7 @@ depend on a model being reachable.
 import logging
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.ai import client
 from app.ai.prompts import get as get_prompt
@@ -30,9 +30,12 @@ class SpeakerMatch(BaseModel):
     belongs to nobody; an integer is validated against a list we supplied, so an
     out-of-range answer is detectable rather than silently wrong.
 
-    Both fields are required -- Groq's strict mode permits no optional keys --
-    so "no match" is expressed as ``choice: null``.
+    Both fields are required -- strict mode permits no optional keys -- so
+    "no match" is expressed as ``choice: null``. ``extra="forbid"`` renders as
+    ``additionalProperties: false``, which strict mode also requires.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     choice: Optional[int] = Field(description="Candidate number, or null if none match")
     reasoning: str = Field(description="One sentence. Why this candidate, or why none.")
