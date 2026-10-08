@@ -32,8 +32,9 @@ service.
 import asyncio
 import logging
 import signal
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,15 +43,13 @@ from app.ai.client import RunBudget
 from app.ai.graph import run_meeting_analysis
 from app.ai.stage_registry import CriticalStageFailed
 from app.core.config import settings
+from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.models import ChatMessage, Deal, Meeting
 from app.models.enums import AnalysisStatus, MessageStatus
 from app.services import analysis as analysis_service
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
-)
+configure_logging()
 logger = logging.getLogger("cognideal.worker")
 
 _shutdown = asyncio.Event()
@@ -58,6 +57,53 @@ _shutdown = asyncio.Event()
 # A poller claims at most one unit of work and returns True if it did. Returning
 # False means "nothing to do", which is what puts the loop to sleep.
 Poller = Tuple[str, Callable[[], Awaitable[bool]]]
+
+
+class _Backoff:
+    """Crash accounting per work item, so a failing item is not hot-looped.
+
+    A crash rolls back and leaves the row claimable -- right for a transient
+    blip, but the claim queries order oldest-first, so the same row came
+    straight back on the next iteration, with no sleep (the poller reported
+    work), and every attempt paid for its model calls again. Now a crashed item
+    sits out an exponential backoff and, after ``worker_max_attempts``, is
+    given up on by the poller that owns it.
+
+    In memory, per process, on purpose: a restart is a reasonable moment to try
+    again, and persisting attempts would need a migration for every queue.
+    """
+
+    def __init__(self) -> None:
+        self._state: Dict[Tuple[str, object], Tuple[int, float]] = {}
+
+    def cooling(self, kind: str) -> List[object]:
+        """Ids of this kind that must not be claimed yet."""
+        now = time.monotonic()
+        return [
+            item_id for (k, item_id), (_, retry_at) in self._state.items()
+            if k == kind and retry_at > now
+        ]
+
+    def crashed(self, kind: str, item_id: object) -> int:
+        """Record a crash and schedule the retry; returns attempts so far."""
+        attempts = self._state.get((kind, item_id), (0, 0.0))[0] + 1
+        delay = settings.worker_retry_backoff_seconds * (2 ** (attempts - 1))
+        self._state[(kind, item_id)] = (attempts, time.monotonic() + delay)
+        if attempts < settings.worker_max_attempts:
+            logger.warning(
+                "worker.retry_scheduled kind=%s id=%s attempt=%d/%d in=%.0fs",
+                kind, item_id, attempts, settings.worker_max_attempts, delay,
+            )
+        return attempts
+
+    def exhausted(self, attempts: int) -> bool:
+        return attempts >= settings.worker_max_attempts
+
+    def clear(self, kind: str, item_id: object) -> None:
+        self._state.pop((kind, item_id), None)
+
+
+_backoff = _Backoff()
 
 
 async def _record_meeting_failure(meeting_id, error: str) -> None:
@@ -84,40 +130,52 @@ async def poll_queued_meetings() -> bool:
         meeting = await _claim_queued_meeting(db)
         if meeting is None:
             return False
-
         meeting_id = meeting.id
-        logger.info("meeting.analysis_started meeting=%s", meeting_id)
+        logger.info("meeting.analysis_started meeting=%s deal=%s", meeting_id, meeting.deal_id)
+        started = time.monotonic()
         budget = RunBudget()
         try:
             state = await run_meeting_analysis(db, meeting, budget)
+            # `analysis_status` and `analyzed_at` are `finalize`'s, so that one
+            # writer owns them. This is the floor underneath it, not a second
+            # writer: `finalize` is a *degradable* stage, so if it raises,
+            # `guarded` swallows it -- and a run that never set a status is a
+            # row the next poll finds `queued` and re-runs.
+            if meeting.analysis_status != AnalysisStatus.COMPLETE:
+                logger.warning(
+                    "meeting.finalize_missed meeting=%s status=%s -- completing anyway",
+                    meeting_id, meeting.analysis_status,
+                )
+                meeting.analysis_status = AnalysisStatus.COMPLETE
+                meeting.analyzed_at = func.now()
+            # Inside the try: a failed commit is a crash like any other and must
+            # go through the backoff, not escape to the loop and leave the row
+            # to be re-claimed immediately.
+            await db.commit()
         except CriticalStageFailed as exc:
             await db.rollback()
+            _backoff.clear("meeting", meeting_id)
             await _record_meeting_failure(meeting_id, str(exc))
             return True
         except Exception as exc:  # noqa: BLE001
-            # Not attributable to a stage: leave the row queued and let it be
-            # retried. An infrastructure blip should not consume the work item.
+            # Not attributable to a stage: leave the row queued and retry with
+            # backoff. An infrastructure blip should not consume the work item,
+            # and a persistent fault must not loop forever either.
             await db.rollback()
             logger.exception("meeting.analysis_crashed meeting=%s error=%r", meeting_id, exc)
+            if _backoff.exhausted(_backoff.crashed("meeting", meeting_id)):
+                _backoff.clear("meeting", meeting_id)
+                await _record_meeting_failure(
+                    meeting_id,
+                    "gave up after %d attempts: %s: %s"
+                    % (settings.worker_max_attempts, type(exc).__name__, exc),
+                )
             return True
-
-        # `analysis_status` and `analyzed_at` are stage 11's (`finalize`), so
-        # that one writer owns them. This is the floor underneath it, not a
-        # second writer: `finalize` is a *degradable* stage, so if it raises,
-        # `guarded` swallows it -- and a run that never set a status is a row
-        # the next poll finds `queued` and re-runs forever.
-        if meeting.analysis_status != AnalysisStatus.COMPLETE:
-            logger.warning(
-                "meeting.finalize_missed meeting=%s status=%s -- completing anyway",
-                meeting_id, meeting.analysis_status,
-            )
-            meeting.analysis_status = AnalysisStatus.COMPLETE
-            meeting.analyzed_at = func.now()
-        await db.commit()
-
+        _backoff.clear("meeting", meeting_id)
         logger.info(
-            "meeting.analysis_complete meeting=%s tokens=%d facts=%d degraded=%s",
-            meeting_id, budget.spent, len(state.get("written_fact_ids") or []),
+            "meeting.analysis_complete meeting=%s seconds=%.1f tokens=%d facts=%d degraded=%s",
+            meeting_id, time.monotonic() - started, budget.spent,
+            len(state.get("written_fact_ids") or []),
             sorted(state.get("stage_errors") or {}) or "none",
         )
         return True
@@ -128,87 +186,124 @@ async def _claim_queued_meeting(db: AsyncSession) -> Optional[Meeting]:
 
     ``SKIP LOCKED`` is what makes more than one worker safe: a second worker
     steps over the locked row instead of blocking on it. Oldest first, so a
-    burst of uploads is analysed in the order it arrived.
+    burst of uploads is analysed in the order it arrived. Meetings in crash
+    backoff are skipped.
     """
+    stmt = select(Meeting).where(Meeting.analysis_status == AnalysisStatus.QUEUED)
+    cooling = _backoff.cooling("meeting")
+    if cooling:
+        stmt = stmt.where(Meeting.id.notin_(cooling))
     return await db.scalar(
-        select(Meeting)
-        .where(Meeting.analysis_status == AnalysisStatus.QUEUED)
-        .order_by(Meeting.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
+        stmt.order_by(Meeting.created_at).limit(1).with_for_update(skip_locked=True)
+    )
+
+
+async def _run_deal(kind: str, *, clear_dirty: bool) -> bool:
+    """Claim one deal for ``kind`` and run its Tier 2 analysis.
+
+    Shared by the dirty-deal and sweep pollers, which differ only in which
+    deal they claim and whether success clears the dirty flags.
+    """
+    claim = _claim_dirty_deal if clear_dirty else _claim_sweep_deal
+    async with SessionLocal() as db:
+        deal = await claim(db)
+        if deal is None:
+            return False
+        deal_id = deal.id
+        logger.info(
+            "deal.%s_started deal=%s reason=%s", kind, deal_id,
+            deal.analysis_dirty_reason if clear_dirty else "sweep",
+        )
+        started = time.monotonic()
+        budget = RunBudget()
+        try:
+            await analysis_service.run_deal_analysis(db, deal_id, budget=budget)
+            if clear_dirty:
+                deal.analysis_dirty_first_at = None
+                deal.analysis_dirty_last_at = None
+                deal.analysis_dirty_reason = None
+            deal.analysis_swept_at = func.now()
+            await db.commit()
+        except Exception:  # noqa: BLE001 -- rollback leaves the enqueue intact
+            await db.rollback()
+            logger.exception("deal.%s_crashed deal=%s", kind, deal_id)
+            if _backoff.exhausted(_backoff.crashed(kind, deal_id)):
+                _backoff.clear(kind, deal_id)
+                await _give_up_on_deal(deal_id, clear_dirty=clear_dirty)
+            return True
+        _backoff.clear(kind, deal_id)
+        logger.info(
+            "deal.%s_complete deal=%s seconds=%.1f tokens=%d",
+            kind, deal_id, time.monotonic() - started, budget.spent,
+        )
+        return True
+
+
+async def _give_up_on_deal(deal_id, *, clear_dirty: bool) -> None:
+    """Stop re-claiming a deal whose analysis keeps crashing.
+
+    Stamps ``analysis_swept_at`` so the sweep leaves it for a full period, and
+    for a dirty deal clears the flags -- the next real change re-enqueues it,
+    which is a better moment to try than the next poll.
+    """
+    values = {"analysis_swept_at": func.now()}
+    if clear_dirty:
+        values.update(
+            analysis_dirty_first_at=None,
+            analysis_dirty_last_at=None,
+            analysis_dirty_reason=None,
+        )
+    async with SessionLocal() as db:
+        await db.execute(update(Deal).where(Deal.id == deal_id).values(**values))
+        await db.commit()
+    logger.error(
+        "deal.analysis_gave_up deal=%s attempts=%d", deal_id, settings.worker_max_attempts
     )
 
 
 async def poll_dirty_deals() -> bool:
     """Run one debounced Tier 2 analysis with a row lock as single-flight."""
-    async with SessionLocal() as db:
-        deal = await _claim_dirty_deal(db)
-        if deal is None:
-            return False
-        deal_id = deal.id
-        budget = RunBudget()
-        try:
-            await analysis_service.run_deal_analysis(db, deal_id, budget=budget)
-            deal.analysis_dirty_first_at = None
-            deal.analysis_dirty_last_at = None
-            deal.analysis_dirty_reason = None
-            deal.analysis_swept_at = func.now()
-            await db.commit()
-        except Exception:  # noqa: BLE001 -- rollback leaves the enqueue intact
-            await db.rollback()
-            logger.exception("deal.analysis_crashed deal=%s", deal_id)
-        return True
+    return await _run_deal("dirty_deal", clear_dirty=True)
 
 
 async def _claim_dirty_deal(db: AsyncSession) -> Optional[Deal]:
     now = datetime.now(timezone.utc)
     quiet_cutoff = now - timedelta(seconds=settings.analysis_debounce_seconds)
     max_cutoff = now - timedelta(seconds=settings.analysis_max_debounce_seconds)
+    stmt = select(Deal).where(
+        Deal.analysis_dirty_first_at.is_not(None),
+        (
+            (Deal.analysis_dirty_last_at < quiet_cutoff)
+            | (Deal.analysis_dirty_first_at < max_cutoff)
+        ),
+    )
+    cooling = _backoff.cooling("dirty_deal")
+    if cooling:
+        stmt = stmt.where(Deal.id.notin_(cooling))
     return await db.scalar(
-        select(Deal)
-        .where(
-            Deal.analysis_dirty_first_at.is_not(None),
-            (
-                (Deal.analysis_dirty_last_at < quiet_cutoff)
-                | (Deal.analysis_dirty_first_at < max_cutoff)
-            ),
-        )
-        .order_by(Deal.analysis_dirty_last_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
+        stmt.order_by(Deal.analysis_dirty_last_at).limit(1).with_for_update(skip_locked=True)
     )
 
 
 async def poll_sweep() -> bool:
     """Refresh one clean deal whose clock-dependent analysis is stale."""
-    async with SessionLocal() as db:
-        deal = await _claim_sweep_deal(db)
-        if deal is None:
-            return False
-        deal_id = deal.id
-        budget = RunBudget()
-        try:
-            await analysis_service.run_deal_analysis(db, deal_id, budget=budget)
-            deal.analysis_swept_at = func.now()
-            await db.commit()
-        except Exception:  # noqa: BLE001 -- old swept_at makes it retryable
-            await db.rollback()
-            logger.exception("deal.sweep_crashed deal=%s", deal_id)
-        return True
+    return await _run_deal("sweep", clear_dirty=False)
 
 
 async def _claim_sweep_deal(db: AsyncSession) -> Optional[Deal]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.analysis_sweep_hours)
+    stmt = select(Deal).where(
+        Deal.analysis_dirty_first_at.is_(None),
+        (
+            Deal.analysis_swept_at.is_(None)
+            | (Deal.analysis_swept_at < cutoff)
+        ),
+    )
+    cooling = _backoff.cooling("sweep")
+    if cooling:
+        stmt = stmt.where(Deal.id.notin_(cooling))
     return await db.scalar(
-        select(Deal)
-        .where(
-            Deal.analysis_dirty_first_at.is_(None),
-            (
-                Deal.analysis_swept_at.is_(None)
-                | (Deal.analysis_swept_at < cutoff)
-            ),
-        )
-        .order_by(Deal.analysis_swept_at.asc().nulls_first())
+        stmt.order_by(Deal.analysis_swept_at.asc().nulls_first())
         .limit(1)
         .with_for_update(skip_locked=True)
     )
@@ -274,9 +369,25 @@ POLLERS: List[Poller] = [
 ]
 
 
-async def run_forever() -> None:
+def stop() -> None:
+    """Ask the loop to finish its current unit of work and return."""
+    _shutdown.set()
+
+
+async def run_forever(*, embedded: bool = False) -> None:
+    """The poll loop. Runs as its own process (``python -m worker``) or
+    inside the API (``EMBEDDED_WORKER=true``, see ``app.main``) -- the same
+    loop either way, and ``SKIP LOCKED`` keeps the two safe side by side.
+    """
+    global _shutdown
+    # Re-created on the running loop unless a stop is already pending: before
+    # Python 3.10 an Event binds to whatever loop existed when it was built,
+    # and the module-level one predates uvicorn's.
+    if not _shutdown.is_set():
+        _shutdown = asyncio.Event()
     logger.info(
-        "worker.started pollers=%s poll_interval=%ss ai_enabled=%s",
+        "worker.started mode=%s pollers=%s poll_interval=%ss ai_enabled=%s",
+        "embedded" if embedded else "standalone",
         [name for name, _ in POLLERS], settings.worker_poll_seconds, settings.ai_enabled,
     )
     while not _shutdown.is_set():
@@ -312,9 +423,9 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
     """
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, _shutdown.set)
+            loop.add_signal_handler(sig, stop)
         except NotImplementedError:  # pragma: no cover -- Windows
-            signal.signal(sig, lambda *_: _shutdown.set())
+            signal.signal(sig, lambda *_: stop())
 
 
 def main() -> None:

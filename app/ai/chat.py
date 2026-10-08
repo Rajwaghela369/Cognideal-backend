@@ -110,17 +110,34 @@ async def stream_turn(
         "You are CogniDeal, an evidence-grounded sales copilot. Use the read-only "
         "tools for factual claims. Tool results contain evidence handles such as e3. "
         "Cite every factual assertion inline as [e3], using only handles returned by "
-        "tools. Clearly label advice or inference as such. Never claim a write occurred. "
+        "tools. Clearly label advice or inference as such. The only change you can "
+        "make is propose_task, which files a suggestion for the user to accept or "
+        "dismiss; never claim a task was created or any record was changed. "
         + scope_note
     )
+    tools = registry.langchain_tools()
+    # One tool call per model step. The tools share this request's
+    # AsyncSession, which does not allow concurrent use, and LangGraph runs
+    # parallel calls concurrently (`asyncio.gather` in ToolNode). `strict`
+    # makes OpenAI hold the arguments to each tool's schema. Bound here,
+    # create_react_agent sees the tools are already bound and does not rebind.
+    model = client.agent_model(task="chat", reasoning_effort="medium").bind_tools(
+        tools, parallel_tool_calls=False, strict=True
+    )
     agent = create_react_agent(
-        client.agent_model(task="chat", reasoning_effort="medium"),
-        registry.langchain_tools(),
+        model,
+        tools,
         prompt=prompt,
         checkpointer=store,
         pre_model_hook=checkpointer.trim_hook(),
     )
+    logger.info(
+        "chat.turn_started session=%s scope=%s deal=%s handle_offset=%d chars=%d",
+        session_id, getattr(session.scope, "value", session.scope), session.deal_id,
+        registry._next, len(question),
+    )
     started = time.monotonic()
+    first_token_at = None
     answer = ""
     last_checkpoint = 0
     budget = client.RunBudget()
@@ -135,11 +152,17 @@ async def stream_turn(
                 message, metadata = event
                 if not isinstance(message, AIMessageChunk):
                     continue
-                if metadata.get("langgraph_node") not in ("agent", "model"):
+                if metadata.get("langgraph_node") != "agent":
                     continue
                 delta = _text(message)
                 if not delta:
                     continue
+                if first_token_at is None:
+                    first_token_at = time.monotonic()
+                    logger.info(
+                        "chat.first_token session=%s after=%.2fs",
+                        session_id, first_token_at - started,
+                    )
                 answer += delta
                 yield json.dumps({"type": "delta", "content": delta})
                 if len(answer) - last_checkpoint >= 500:
@@ -157,19 +180,48 @@ async def stream_turn(
             ),
         }
         await db.commit()
+        logger.info(
+            "chat.turn_complete session=%s message=%s seconds=%.2f tokens=%d chars=%d citations=%d",
+            session_id, assistant_id, time.monotonic() - started,
+            assistant.token_usage["total_tokens"], len(answer),
+            len(assistant.token_usage["citation_handles"]),
+        )
         yield json.dumps({"type": "done", "message_id": str(assistant.id)})
         if session.title is None:
             asyncio.create_task(_title_session(session.id, question, answer))
+    except asyncio.CancelledError:
+        # The client went away -- closed the tab, or stopped and resent.
+        # Starlette cancels the response, which lands here mid-await. Close
+        # the row out now rather than leaving it `streaming` until the reaper
+        # (`chat_stream_timeout_seconds`) finds it, which would show a
+        # spinner on reload for up to fifteen minutes.
+        logger.info("chat.turn_cancelled session=%s", session_id)
+        await _mark_failed(assistant_id, answer, started)
+        raise
     except Exception as exc:
         await db.rollback()
-        row = await db.get(ChatMessage, assistant_id)
-        if row is not None:
-            row.content = answer
-            row.status = MessageStatus.ERROR
-            row.latency_ms = int((time.monotonic() - started) * 1000)
-            await db.commit()
+        await _mark_failed(assistant_id, answer, started)
         logger.exception("chat.turn_failed session=%s", session_id)
         yield json.dumps({"type": "error", "detail": str(exc)})
+
+
+async def _mark_failed(assistant_id, answer: str, started: float) -> None:
+    """Record a turn that did not complete, keeping what had streamed.
+
+    A fresh session, not the request's: after a cancellation the request's
+    connection may be mid-statement, and reusing it fails with "another
+    operation is in progress". Best-effort -- the reaper is the backstop.
+    """
+    try:
+        async with SessionLocal() as fresh:
+            row = await fresh.get(ChatMessage, assistant_id)
+            if row is not None and row.status == MessageStatus.STREAMING:
+                row.content = answer
+                row.status = MessageStatus.ERROR
+                row.latency_ms = int((time.monotonic() - started) * 1000)
+                await fresh.commit()
+    except Exception:  # noqa: BLE001 -- the reaper finalizes it instead
+        logger.exception("chat.mark_failed_failed message=%s", assistant_id)
 
 
 async def _handles_issued(db, session_id) -> int:

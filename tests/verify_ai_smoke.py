@@ -21,6 +21,7 @@ sys.path.insert(0, ".")
 from pydantic import BaseModel, Field
 
 from app.ai import client
+from app.core.config import settings
 from app.ai.prompts import get as get_prompt
 
 TEXT = "Northwind Logistics signed for $180,000 after the security review."
@@ -37,7 +38,7 @@ class Extracted(BaseModel):
 async def main() -> int:
     prompt = get_prompt("smoke")
     print("model   :", client.model_for(client.ROLE_PRIMARY))
-    print("method  :", "json_schema", "| strict:", client._SUPPORTS_STRICT)
+    print("method  :", "json_schema", "| strict:", settings.structured_output_method in ("json_schema", "function_calling"))
     print("prompt  :", prompt.version)
 
     parsed, run = await client.structured(

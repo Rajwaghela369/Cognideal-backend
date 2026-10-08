@@ -2,7 +2,7 @@
 
 Not a product prompt. It exists so that task 0.3's acceptance test -- "a smoke
 test returns a parsed object and a populated usage record" -- can run against
-the real Groq endpoint without any pipeline existing, and so that the registry
+the real model endpoint without any pipeline existing, and so that the registry
 has something to prove itself against.
 
 Kept afterwards: it is the cheapest possible answer to "is the key valid, is

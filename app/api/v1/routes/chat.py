@@ -161,4 +161,10 @@ async def send_message(
         async for event in chat_agent.stream_turn(db, session, body.content):
             yield "data: %s\n\n" % event
 
-    return StreamingResponse(events(), media_type="text/event-stream")
+    # No caching, and no proxy buffering: a buffering proxy holds the deltas
+    # and releases the whole answer at once, which looks like a hung stream.
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

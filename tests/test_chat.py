@@ -186,6 +186,14 @@ async def test_chat_citations_preserve_the_inline_handle(db, deal_id):
     await db.commit()
 
 
+
+class _StubModel:
+    """Stands in for the chat model where the agent itself is faked."""
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
 @pytest.mark.asyncio
 async def test_interrupted_stream_leaves_a_recoverable_row(db, deal_id, monkeypatch):
     session = ChatSession(scope=ChatScope.DEAL, deal_id=deal_id)
@@ -199,7 +207,7 @@ async def test_interrupted_stream_leaves_a_recoverable_row(db, deal_id, monkeypa
             raise RuntimeError("stream interrupted")
 
     monkeypatch.setattr(chat, "create_react_agent", lambda *a, **k: BrokenAgent())
-    monkeypatch.setattr(chat.client, "agent_model", lambda **kwargs: object())
+    monkeypatch.setattr(chat.client, "agent_model", lambda **kwargs: _StubModel())
 
     events = [event async for event in chat.stream_turn(db, session, "What changed?")]
     messages = list((await db.scalars(
@@ -258,7 +266,7 @@ async def test_completed_turn_records_all_call_usage_and_citations(
 
     monkeypatch.setattr(chat, "create_react_agent", lambda *a, **k: CompletedAgent())
     monkeypatch.setattr(chat, "ToolRegistry", Registry)
-    monkeypatch.setattr(chat.client, "agent_model", lambda **kwargs: object())
+    monkeypatch.setattr(chat.client, "agent_model", lambda **kwargs: _StubModel())
     monkeypatch.setattr(chat.client, "track_usage", fake_usage)
     monkeypatch.setattr(chat.client, "usage_total", lambda callback: 321)
 

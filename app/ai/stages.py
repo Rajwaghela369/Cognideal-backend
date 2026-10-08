@@ -30,6 +30,7 @@ from app.models import (
     Evidence,
     ExtractedFact,
     Meeting,
+    MeetingAttendee,
     Recommendation,
 )
 from app.models.enums import (
@@ -96,7 +97,7 @@ def speakers_from_chunks(chunks: Sequence[Any]) -> List[str]:
 
 
 async def build_roster(
-    db: AsyncSession, *, meeting: Meeting, chunks: Sequence[Any]
+    db: AsyncSession, *, meeting: Meeting, chunks: Sequence[Any], budget: Any = None
 ) -> Dict[str, Any]:
     """Stage 1 -- speaker labels into ``meeting_attendees``, resolved where safe.
 
@@ -117,10 +118,19 @@ async def build_roster(
     ambiguous = [r for r in resolutions.values() if r.needs_tiebreak]
     if ambiguous and settings.ai_enabled:
         for resolution in ambiguous:
-            await tiebreak.resolve_ambiguous(resolution)
-        # Re-run the writer so a newly decided link lands. It upgrades NULL to
-        # a contact and never the reverse, so repeating it is safe.
-        await roster.sync_roster(db, meeting.id, account_id, speakers)
+            # Optional by nature: this stage is critical, and a 429 on a name
+            # tiebreak must not fail the whole meeting. NULL is the safe
+            # outcome -- an unresolved attendee is itself a signal.
+            try:
+                await tiebreak.resolve_ambiguous(resolution, budget=budget)
+            except client.TokenCeilingExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- leave the name unresolved
+                logger.warning(
+                    "stage1.tiebreak_failed meeting=%s name=%r error=%r",
+                    meeting.id, resolution.raw_name, exc,
+                )
+        await _link_tiebreak_decisions(db, meeting.id, ambiguous)
 
     logger.info(
         "stage1.roster meeting=%s speakers=%d linked=%d unknown=%s ambiguous=%s",
@@ -130,6 +140,63 @@ async def build_roster(
         [r.raw_name for r in ambiguous] or "none",
     )
     return {"attendees": list(resolutions.values())}
+
+
+async def _link_tiebreak_decisions(
+    db: AsyncSession, meeting_id: Any, decided: Sequence[Any]
+) -> int:
+    """Write the contacts the tiebreak chose onto the attendee rows.
+
+    This used to re-run ``roster.sync_roster``, on the theory that it would
+    pick the decision up -- but it resolves every name again from similarity
+    alone, finds the same ambiguity, and writes NULL. Every tiebreak answer was
+    discarded. The decision lives on the ``Resolution`` objects, so it is
+    written from there.
+
+    Upgrades NULL only, never replaces a link a human made, and never gives two
+    attendees of one meeting the same contact -- the partial unique index on
+    ``(meeting_id, contact_id)`` would reject it, and in a critical stage that
+    would fail the meeting.
+    """
+    chosen = [r for r in decided if r.contact_id is not None]
+    if not chosen:
+        return 0
+    rows = list((await db.scalars(
+        select(MeetingAttendee).where(MeetingAttendee.meeting_id == meeting_id)
+    )).all())
+    by_name = {roster.normalise(row.raw_name).casefold(): row for row in rows}
+    taken = {row.contact_id for row in rows if row.contact_id is not None}
+    linked = 0
+    for resolution in chosen:
+        row = by_name.get(roster.normalise(resolution.raw_name).casefold())
+        if row is None or row.contact_id is not None or resolution.contact_id in taken:
+            continue
+        row.contact_id = resolution.contact_id
+        taken.add(resolution.contact_id)
+        linked += 1
+    await db.flush()
+    logger.info("stage1.tiebreak_linked meeting=%s linked=%d", meeting_id, linked)
+    return linked
+
+
+def _usable_fact_pairs(
+    surviving_facts: Sequence[Any],
+    written_fact_ids: Sequence[Any],
+    validations: Dict[Any, Any],
+) -> List[Any]:
+    """``(fact_id, candidate)`` for facts Gate 1 did not quarantine.
+
+    The same rule as :func:`_renderable_facts`, for the stages that act on a
+    fact rather than describe it: a claim its own span does not support must
+    not satisfy a commitment or retire an accepted fact. Unvalidated facts
+    (Gate 1 off or failed) are kept -- unvalidated is not the same as failed.
+    """
+    return [
+        (fact_id, candidate)
+        for fact_id, candidate in zip(written_fact_ids, surviving_facts)
+        if not ((validations or {}).get(fact_id) is not None
+                and validations[fact_id].quarantined)
+    ]
 
 
 async def should_extract(db: AsyncSession, *, meeting: Meeting) -> bool:
@@ -479,6 +546,8 @@ async def reconcile_commitments(
     *,
     meeting: Meeting,
     surviving_facts: Sequence[Any],
+    written_fact_ids: Sequence[Any] = (),
+    validations: Optional[Dict[Any, Any]] = None,
     budget: Any = None,
 ) -> Dict[str, Any]:
     """Stage 7 -- do this call's facts show an open promise was kept?
@@ -506,11 +575,12 @@ async def reconcile_commitments(
     true. Gate 0 runs again anyway on each link, because this claim is not the
     one the span was first attached to.
     """
-    if not surviving_facts:
+    usable = _usable_fact_pairs(surviving_facts, written_fact_ids, validations or {})
+    if not usable:
         return {"commitment_proposals": []}
 
     proposals = await reconcile.reconcile_commitments(
-        db, meeting.deal_id, surviving_facts, budget=budget
+        db, meeting.deal_id, [candidate for _, candidate in usable], budget=budget
     )
     for commitment_id, why in proposals:
         await _file_correction(
@@ -518,7 +588,7 @@ async def reconcile_commitments(
             deal_id=meeting.deal_id,
             commitment_id=commitment_id,
             why=why,
-            facts=surviving_facts,
+            fact_ids=[fact_id for fact_id, _ in usable],
         )
     return {"commitment_proposals": proposals}
 
@@ -529,7 +599,7 @@ async def _file_correction(
     deal_id: Any,
     commitment_id: Any,
     why: str,
-    facts: Sequence[Any],
+    fact_ids: Sequence[Any],
 ) -> Optional[Any]:
     """Upsert one `correct_record` suggestion for a commitment.
 
@@ -573,7 +643,18 @@ async def _file_correction(
     existing.detector_version = get_prompt("reconcile").version
     await db.flush()
 
-    await _link_fact_evidence(db, deal_id, existing.id, facts)
+    linked = await _link_fact_evidence(db, deal_id, existing.id, fact_ids)
+    if not linked and not await db.scalar(
+        select(ClaimEvidence.id).where(
+            ClaimEvidence.claim_type == ClaimType.RECOMMENDATION,
+            ClaimEvidence.claim_id == existing.id,
+        ).limit(1)
+    ):
+        # A suggestion citing nothing is one the UI must not show; raising
+        # rolls this stage's savepoint back, recommendation included.
+        raise RuntimeError(
+            "correction for commitment %s has no evidence to cite" % commitment_id
+        )
     logger.info(
         "stage7.filed deal=%s commitment=%s recommendation=%s",
         deal_id, commitment_id, existing.id,
@@ -585,7 +666,7 @@ async def _link_fact_evidence(
     db: AsyncSession,
     deal_id: Any,
     recommendation_id: Any,
-    facts: Sequence[Any],
+    fact_ids: Sequence[Any],
 ) -> int:
     """Point a claim at the evidence its source facts already cite.
 
@@ -595,7 +676,10 @@ async def _link_fact_evidence(
     left alone -- the triple is unique, and inserting a duplicate would raise
     rather than no-op.
     """
-    fact_ids = [fact.id for fact in facts]
+    # Ids, not the candidates: a `CandidateFact` is the model's proposal and
+    # has no `id` -- reading `fact.id` here raised on every proposal, after
+    # the recommendation had been flushed, leaving it with no evidence.
+    fact_ids = list(fact_ids)
     if not fact_ids:
         return 0
 
@@ -650,6 +734,7 @@ async def supersede_facts(
     *,
     meeting: Meeting,
     written_fact_ids: Sequence[Any],
+    validations: Optional[Dict[Any, Any]] = None,
     budget: Any = None,
 ) -> Dict[str, Any]:
     """Stage 8 -- Gate 2, both halves.
@@ -663,14 +748,22 @@ async def supersede_facts(
     flagged `stale`. Both answer "is this still current?", so keeping them in
     one stage means a reader never sees one applied without the other.
     """
-    if not written_fact_ids:
+    # Only facts Gate 1 did not quarantine may retire an accepted one: a
+    # claim its own span contradicts must not mark a human-approved fact
+    # superseded.
+    validations = validations or {}
+    eligible = [
+        fact_id for fact_id in written_fact_ids
+        if not (validations.get(fact_id) is not None and validations[fact_id].quarantined)
+    ]
+    if not eligible:
         stale = await gate2.mark_stale_claims(db, meeting.deal_id, ClaimType.FACT)
         return {"superseded": [], "stale_claims": stale}
 
     fresh = list(
         (
             await db.execute(
-                select(ExtractedFact).where(ExtractedFact.id.in_(list(written_fact_ids)))
+                select(ExtractedFact).where(ExtractedFact.id.in_(eligible))
             )
         ).scalars()
     )

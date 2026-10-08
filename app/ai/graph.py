@@ -21,6 +21,11 @@ model rather than a preference:
 *   **``retry_policy`` goes on ``extract_window`` only.** It writes nothing
     until Gate 0, so a retry is free. Every other node writes rows, and a node
     that wrote and then retried writes twice.
+*   **Each degradable stage runs in a SAVEPOINT.** The run is one transaction
+    (the worker's), so a database error in, say, the summary would otherwise
+    abort it: every later stage, ``finalize`` and the worker's commit would all
+    fail, and the facts the critical stages wrote would be rolled back with
+    them. The savepoint confines the damage to the stage that broke.
 
 No checkpointer. ``analysis_status`` is the run state and each stage writes its
 own rows, so the durability already exists; adding
@@ -29,6 +34,7 @@ tables Alembic would try to drop (docs/ai/README.md section 7).
 """
 
 import logging
+import time
 from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
@@ -36,7 +42,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy, Send
 from sqlalchemy import select
 
-from app.ai import extract, stages
+from app.ai import client, extract, stages
 from app.ai.client import RunBudget
 from app.ai.stage_registry import BY_NAME, LATE_STAGES, CriticalStageFailed
 from app.ai.state import AnalysisContext, AnalysisState, WindowInput
@@ -64,22 +70,68 @@ def guarded(name: str):
 
     def decorate(fn):
         async def node(state, runtime):
+            ctx = runtime.context
+            meeting_id = getattr(ctx.meeting, "id", None)
+            started = time.monotonic()
             try:
-                return await fn(state, runtime)
+                if stage.critical:
+                    result = await fn(state, runtime)
+                else:
+                    # See the module docstring: a database error here must not
+                    # abort the run's transaction.
+                    async with ctx.db.begin_nested():
+                        result = await fn(state, runtime)
             except CriticalStageFailed:
                 raise
             except Exception as exc:  # noqa: BLE001 -- classified by `critical`
                 if stage.critical:
+                    logger.error(
+                        "graph.stage_failed stage=%d:%s meeting=%s seconds=%.1f critical=true error=%r",
+                        stage.index, name, meeting_id, time.monotonic() - started, exc,
+                    )
                     raise CriticalStageFailed(stage, exc) from exc
                 logger.warning(
-                    "graph.stage_failed stage=%d:%s error=%r", stage.index, name, exc
+                    "graph.stage_failed stage=%d:%s meeting=%s seconds=%.1f error=%r",
+                    stage.index, name, meeting_id, time.monotonic() - started, exc,
                 )
+                await _reload_meeting(ctx)
                 return {"stage_errors": {name: "%s: %s" % (type(exc).__name__, exc)}}
+            logger.info(
+                "graph.stage_done stage=%d:%s meeting=%s seconds=%.1f",
+                stage.index, name, meeting_id, time.monotonic() - started,
+            )
+            return result
 
         node.__name__ = name
         return node
 
     return decorate
+
+
+async def _reload_meeting(ctx: AnalysisContext) -> None:
+    """Re-read the meeting after a stage's savepoint rolled back.
+
+    SQLAlchemy expires objects modified inside a rolled-back savepoint, and an
+    expired attribute read later -- by a following stage or the worker -- would
+    be an implicit lazy load, which asyncio cannot do (``MissingGreenlet``).
+    """
+    try:
+        await ctx.db.refresh(ctx.meeting)
+    except Exception:  # noqa: BLE001 -- the run carries on; the worker reports
+        logger.exception("graph.meeting_reload_failed meeting=%s", ctx.meeting.id)
+
+
+def _retry_extraction(exc: BaseException) -> bool:
+    """Whether LangGraph should re-run an extraction window.
+
+    ``guarded`` wraps every critical failure in ``CriticalStageFailed``, a
+    ``RuntimeError`` -- and LangGraph's default ``retry_on`` refuses
+    ``RuntimeError``, so a policy without this predicate never retried
+    anything. Decided on the cause instead: rate limits, timeouts and 5xx are
+    worth another window; a schema or prompt error is not.
+    """
+    cause = exc.cause if isinstance(exc, CriticalStageFailed) else exc
+    return client._is_retryable(cause)
 
 
 # --------------------------------------------------------------------------
@@ -97,7 +149,7 @@ async def parse_transcript(state: AnalysisState, runtime: Runtime[AnalysisContex
 async def roster(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> Dict:
     ctx = runtime.context
     return await stages.build_roster(
-        ctx.db, meeting=ctx.meeting, chunks=state.get("chunks") or []
+        ctx.db, meeting=ctx.meeting, chunks=state.get("chunks") or [], budget=ctx.budget
     )
 
 
@@ -156,12 +208,13 @@ def anything_survived(state: AnalysisState) -> str:
     validate and the summary has no facts to compose from. Not a failure --
     the fact stages ran and found nothing citable.
 
-    It skips to **`finalize`, not to `END`**. Routing straight out would leave
-    `analysis_status` unset, so the worker would find the row still `queued`
-    and re-run it on every poll, forever. A meeting with no facts is still a
-    meeting that was analysed.
+    It skips to **risk detection, not to `END`**. Routing straight out would
+    leave `analysis_status` unset, so the worker would find the row still
+    `queued` and re-run it on every poll. A meeting with no facts is still a
+    meeting that was analysed, and the deal's risks still need refreshing --
+    detection reads the whole deal, not just this meeting's facts.
     """
-    return "gate1_entailment" if state.get("surviving_facts") else "finalize"
+    return "gate1_entailment" if state.get("surviving_facts") else "redetect_risks"
 
 
 @guarded("gate1_entailment")
@@ -187,7 +240,10 @@ async def reconcile_commitments(state: AnalysisState, runtime: Runtime[AnalysisC
     ctx = runtime.context
     return await stages.reconcile_commitments(
         ctx.db, meeting=ctx.meeting,
-        surviving_facts=state.get("surviving_facts") or [], budget=ctx.budget,
+        surviving_facts=state.get("surviving_facts") or [],
+        written_fact_ids=state.get("written_fact_ids") or [],
+        validations=state.get("validations") or {},
+        budget=ctx.budget,
     )
 
 
@@ -196,7 +252,9 @@ async def supersede_facts(state: AnalysisState, runtime: Runtime[AnalysisContext
     ctx = runtime.context
     return await stages.supersede_facts(
         ctx.db, meeting=ctx.meeting,
-        written_fact_ids=state.get("written_fact_ids") or [], budget=ctx.budget,
+        written_fact_ids=state.get("written_fact_ids") or [],
+        validations=state.get("validations") or {},
+        budget=ctx.budget,
     )
 
 
@@ -284,7 +342,10 @@ def build_graph():
         input_schema=WindowInput,
         # The only node that writes nothing before it returns, so the only one
         # where a retry cannot duplicate a row.
-        retry_policy=RetryPolicy(max_attempts=2, initial_interval=2.0, jitter=True),
+        retry_policy=RetryPolicy(
+            max_attempts=2, initial_interval=2.0, jitter=True,
+            retry_on=_retry_extraction,
+        ),
     )
     graph.add_node("gate0", NODES["gate0"])
     graph.add_node("drop_unevidenced", NODES["drop_unevidenced"])
@@ -300,7 +361,7 @@ def build_graph():
     graph.add_edge("extract_window", "gate0")
     graph.add_edge("gate0", "drop_unevidenced")
     graph.add_conditional_edges(
-        "drop_unevidenced", anything_survived, ["gate1_entailment", "finalize"]
+        "drop_unevidenced", anything_survived, ["gate1_entailment", "redetect_risks"]
     )
     for current, following in zip(LATE_STAGES, LATE_STAGES[1:]):
         graph.add_edge(current, following)

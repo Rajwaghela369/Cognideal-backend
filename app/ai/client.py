@@ -12,9 +12,8 @@ Three things this module owns:
     changes; a task that names a role never does.
 *   **Structured output.** ``method="json_schema"`` with ``strict`` is OpenAI's
     Structured Outputs -- constrained decoding, so the schema is guaranteed.
-    ``docs/ai/README.md`` section 7 has the two standing consequences: every
-    field must be required, and structured output cannot be combined with
-    streaming or tool use.
+    ``docs/ai/README.md`` section 7 has the standing consequence: every field
+    must be required.
 *   **Accounting.** Every call returns an :class:`AIRun` beside its result and
     logs one structured line. ``docs/schema/README.md`` section 10 deliberately
     has no ``ai_runs`` table, so this log *is* the run record.
@@ -24,16 +23,14 @@ Three things this module owns:
 gates a model call is :func:`_require_enabled` -- ``ai_enabled`` plus a key --
 not the availability of the import.
 
-**The provider moved from Groq to OpenAI**, and the tasks did not notice: they
-name roles, and the one Groq-specific knob they pass -- ``reasoning_effort``,
-tuned per task for gpt-oss -- is forwarded only to models that accept it (see
-:func:`_accepts_reasoning_effort`). gpt-4o rejects it with a 400, so on the
-default models it is simply dropped; point a role at a reasoning model and the
-per-task tuning applies again without touching a call site.
+**Two kinds of model.** OpenAI's reasoning models (o-series, ``gpt-5*``) take
+``reasoning_effort`` and reject ``temperature``; gpt-4o and the other chat
+models are the reverse, and either mistake is a 400. :func:`is_reasoning_model`
+decides which one :func:`chat_model` sends, so call sites always pass their
+per-task ``reasoning_effort`` and pointing a role at either kind is config-only.
 """
 
 import asyncio
-import inspect
 import json
 import logging
 import re
@@ -51,20 +48,16 @@ from app.ai.governor import RateLimitGovernor, estimate_tokens
 
 logger = logging.getLogger("cognideal.ai")
 
-# Whether the installed langchain-openai can request strict mode. Probed once
-# rather than pinned to a version string: the answer is "does this function
-# take this argument", and asking directly cannot drift.
-_SUPPORTS_STRICT = (
-    "strict" in inspect.signature(ChatOpenAI.with_structured_output).parameters
-)
-
-# Model families that take `reasoning_effort`. Anything else -- gpt-4o,
-# gpt-4o-mini -- answers it with `400 Unrecognized request argument`.
-_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
+# Model families that take `reasoning_effort` and reject `temperature`.
+# Anything else -- gpt-4o, gpt-4o-mini, gpt-4.1 -- is the reverse. `gpt-5-chat*`
+# is the exception inside the family: a non-reasoning snapshot.
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5")
 
 
-def _accepts_reasoning_effort(model: str) -> bool:
-    return model.split("/")[-1].startswith(_REASONING_MODEL_PREFIXES)
+def is_reasoning_model(model: str) -> bool:
+    name = model.lower()
+    return name.startswith(_REASONING_MODEL_PREFIXES) and "-chat" not in name
+
 
 # Roles, not sizes. docs/ai/README.md section 7 assigns them.
 ROLE_PRIMARY = "primary"
@@ -214,9 +207,13 @@ def chat_model(
     turns one 429 into several -- retries are handled in :func:`_invoke`, where
     the rate limiter can see them.
 
-    ``temperature=0``: every task here is extraction, classification or
-    entailment. None of them wants sampling variance, and stability across runs
-    is a product requirement (docs/ai/README.md section 10, the flicker metric).
+    ``temperature=0`` on non-reasoning models: every task here is extraction,
+    classification or entailment. None of them wants sampling variance, and
+    stability across runs is a product requirement (docs/ai/README.md section
+    10, the flicker metric). Reasoning models reject any temperature but the
+    default and get ``reasoning_effort`` instead -- decided by the model, not
+    by whether the caller passed an effort, so a reasoning model called without
+    one still gets no ``temperature``.
 
     ``stream_usage=True``: OpenAI omits token usage from a streamed response
     unless asked, and the chat agent streams -- without it ``track_usage``
@@ -234,10 +231,10 @@ def chat_model(
         "max_retries": 0,
         "stream_usage": True,
     }
-    if reasoning_effort is not None and _accepts_reasoning_effort(name):
-        kwargs["reasoning_effort"] = reasoning_effort
-        # Reasoning models reject any temperature but the default.
+    if is_reasoning_model(name):
         del kwargs["temperature"]
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
     # Left unset for the `structured` path, which takes from the same bucket
     # itself -- attaching it there would charge every request twice.
     if rate_limiter is not None:
@@ -263,31 +260,53 @@ def _is_retryable(exc: BaseException) -> bool:
     )
 
 
-_RETRY_AFTER = re.compile(r"try again in ([0-9.]+)s", re.IGNORECASE)
+_RETRY_AFTER = re.compile(r"try again in ((?:[0-9.]+(?:ms|h|m|s))+)", re.IGNORECASE)
+_DURATION_PART = re.compile(r"([0-9.]+)(ms|h|m|s)")
+_DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def _duration_seconds(raw: Any) -> Optional[float]:
+    """``"1.5"``, ``"20ms"``, ``"6m0s"`` -> seconds; None when unparseable.
+
+    ``retry-after`` is plain seconds; OpenAI's ``x-ratelimit-reset-*`` headers
+    and its 429 messages use the compound form.
+    """
+    text_value = str(raw).strip().lower()
+    try:
+        return float(text_value)
+    except ValueError:
+        pass
+    parts = _DURATION_PART.findall(text_value)
+    if not parts or "".join(n + u for n, u in parts) != text_value:
+        return None
+    try:
+        return sum(float(n) * _DURATION_UNITS[u] for n, u in parts)
+    except ValueError:
+        return None
 
 
 def _retry_after(exc: BaseException, attempt: int) -> float:
     """How long to wait, preferring the server's own answer.
 
-    A 429 says exactly when the window reopens -- "Please try again
-    in 13.3575s" -- and a flat one-second backoff ignores it, retries into the
-    same exhausted window and burns the attempt. The hint is read from the
-    `retry-after` header when the exception carries one and from the message
-    otherwise, because which of those exists depends on the SDK version.
+    A 429 says when the window reopens -- "Please try again in 1.3s" or
+    "in 20ms" in the message, ``retry-after`` / ``x-ratelimit-reset-tokens``
+    in the headers -- and a flat one-second backoff ignores it, retries into
+    the same exhausted window and burns the attempt.
 
     Capped: a server asking for several minutes is better handled by failing
     the stage than by holding a worker.
     """
     headers = getattr(getattr(exc, "response", None), "headers", None) or {}
-    raw = headers.get("retry-after") or headers.get("x-ratelimit-reset-tokens")
-    if raw:
-        try:
-            return min(float(str(raw).rstrip("s")), 60.0)
-        except ValueError:
-            pass
+    for key in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        raw = headers.get(key)
+        seconds = _duration_seconds(raw) if raw else None
+        if seconds is not None:
+            return min(seconds + 0.25, 60.0)
     match = _RETRY_AFTER.search(str(exc))
     if match:
-        return min(float(match.group(1)) + 0.5, 60.0)
+        seconds = _duration_seconds(match.group(1))
+        if seconds is not None:
+            return min(seconds + 0.5, 60.0)
     return 1.0 * attempt
 
 
@@ -387,26 +406,6 @@ def _content_of(raw: Any) -> Optional[str]:
             part.get("text", "") if isinstance(part, dict) else str(part)
             for part in content
         ) or None
-    return None
-
-
-def _failed_generation(exc: BaseException) -> Optional[str]:
-    """A provider's rejected completion, when a 400 carries one.
-
-    Groq's ``json_validate_failed`` returns the text the model produced in
-    ``error.failed_generation``, which is the only copy -- nothing reaches the
-    LangChain parser at all -- so a salvage has to read it off the exception.
-    OpenAI's strict mode never produces this error (decoding is constrained),
-    so on the current provider this returns None and the salvage path below,
-    on ``parsing_error``, is the one that matters.
-    """
-    body = getattr(exc, "body", None)
-    if isinstance(body, dict):
-        error = body.get("error")
-        if isinstance(error, dict) and error.get("code") == "json_validate_failed":
-            generation = error.get("failed_generation")
-            if isinstance(generation, str):
-                return generation
     return None
 
 
@@ -559,48 +558,25 @@ async def structured(
     ``parsing_error``.
 
     A ``parsing_error`` is raised rather than returned: a task that silently
-    receives ``None`` would write a claim with no content. Under constrained
-    decoding it should be unreachable, so it means the stronger mode was not
-    applied; on 0.3.8, where it never is, it simply means the model returned
-    the wrong shape. Either way the claim must not land.
+    receives ``None`` would write a claim with no content. Under strict
+    constrained decoding the shape is guaranteed, so what remains is a refusal,
+    a response cut off by ``max_tokens``, or a non-constraining fallback
+    method. Either way the claim must not land.
     """
     llm = chat_model(role=role, task=task, reasoning_effort=reasoning_effort, model=model)
     structured_kwargs: Dict[str, Any] = {
         "method": settings.structured_output_method,
         "include_raw": True,
     }
-    if _SUPPORTS_STRICT and settings.structured_output_method == "json_schema":
-        # Constrained decoding. Silently absent on 0.3.8 -- see the module
-        # docstring; do not pass it blind, it would reach the API as an unknown
-        # top-level parameter.
+    if settings.structured_output_method in ("json_schema", "function_calling"):
+        # Constrained decoding. `json_mode` has no strict variant.
         structured_kwargs["strict"] = True
     runnable = llm.with_structured_output(schema, **structured_kwargs)
 
     run = AIRun(task=task, model=model or model_for(role), prompt_version=prompt_version)
     estimated = estimate_tokens(_render(messages)) + max_tokens_for(task)
 
-    try:
-        result = await _invoke(runnable, list(messages), run, estimated)
-    except Exception as exc:  # noqa: BLE001 -- re-raised unless salvageable
-        # A provider that rejects a schema violation up front (Groq's `400
-        # json_validate_failed`) hands back the text the model produced.
-        # Nothing reaches the parser below, so this is the only chance to
-        # recover the one case worth recovering: a stray element inside an
-        # array of objects. See `_strip_stray_elements`.
-        parsed, dropped = _salvage(schema, _failed_generation(exc), task)
-        if parsed is None:
-            raise
-        run.outcome = "ok_salvaged"
-        run.extra["salvaged_drops"] = dropped
-        # WARNING, not info: the result is real but incomplete, and a run that
-        # quietly returned fewer risks than the model found is exactly the kind
-        # of thing that should be countable in the logs.
-        logger.warning(
-            "ai.salvaged task=%s source=json_validate_failed dropped=%d %s",
-            task, len(dropped), dropped,
-        )
-        run.log()
-        return parsed, run
+    result = await _invoke(runnable, list(messages), run, estimated)
 
     raw = result.get("raw") if isinstance(result, dict) else None
     parsed = result.get("parsed") if isinstance(result, dict) else result
@@ -611,9 +587,10 @@ async def structured(
 
     error = result.get("parsing_error") if isinstance(result, dict) else None
     if error is not None or parsed is None:
-        # Same defect, arriving the other way: the completion came back and
-        # failed validation here instead of at the provider. Of the three detect runs
-        # task 11.9 lost, one was the 400 above and two were this.
+        # The completion came back and failed validation. Rare under strict
+        # mode; what it still catches is a stray element inside an array of
+        # objects from a non-constraining fallback -- see
+        # `_strip_stray_elements`.
         salvaged, dropped = _salvage(schema, _content_of(raw), task)
         if salvaged is not None:
             run.outcome = "ok_salvaged"

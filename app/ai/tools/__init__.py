@@ -13,6 +13,8 @@ delete tool, and `propose_task` cannot touch any row that already exists.
 """
 
 import json
+import logging
+import time
 import uuid
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -40,6 +42,7 @@ from app.models.enums import (
     ActionType,
     ClaimType,
     CommitmentStatus,
+    DealStage,
     Origin,
     RecommendationStatus,
     RiskStatus,
@@ -51,27 +54,81 @@ from app.services import claims as claims_service
 #: for the same reason every prompt carries a version.
 PROPOSE_VERSION = "chat-propose-1"
 
+logger = logging.getLogger("cognideal.ai.tools")
+
+#: Deals one `search_deals` call returns. Every field of every deal is its own
+#: evidence entry, and the whole result stays in the thread for every later
+#: model step that turn -- so this bounds tokens, not just rows.
+SEARCH_DEALS_LIMIT = 20
+
+# The argument schemas are sent to OpenAI with `strict: true` (see
+# `chat.stream_turn`), which constrains decoding to the schema. Strict mode has
+# no optional fields: every field is required and absence is an explicit null,
+# so nothing here has a default. Length rules are checked in Python rather than
+# declared as `minLength`/`maxLength`, which strict mode does not accept.
+
 
 class DealArgs(BaseModel):
-    deal_id: Optional[str] = Field(default=None, description="Deal UUID; omit in a deal-scoped chat")
+    deal_id: Optional[str] = Field(
+        description="Deal UUID. null in a deal-scoped chat, required in a global one."
+    )
 
 
 class SearchDealsArgs(BaseModel):
-    stage: Optional[str] = None
-    stale_days: Optional[int] = None
-    value_min: Optional[float] = None
+    name: Optional[str] = Field(description="Part of the deal name, or null")
+    stage: Optional[DealStage] = Field(description="Exact pipeline stage, or null")
+    stale_days: Optional[int] = Field(
+        description="Only deals with no activity in this many days, or null"
+    )
+    value_min: Optional[float] = Field(description="Minimum deal value, or null")
 
 
 class SearchDocumentsArgs(DealArgs):
-    query: str = Field(min_length=1)
+    query: str = Field(description="Exact text to find, matched case-insensitively")
 
 
 class ProposeTaskArgs(DealArgs):
-    """No `status`, no `priority` beyond a bounded hint, no ids of existing
-    rows. The model supplies prose and nothing structural."""
+    """No `status`, no `priority`, no ids of existing rows. The model supplies
+    prose and nothing structural."""
 
-    title: str = Field(min_length=3, max_length=200, description="The action to take, imperative")
-    rationale: str = Field(min_length=3, description="Why, in one or two sentences")
+    title: str = Field(description="The action to take, imperative, 3-200 characters")
+    rationale: str = Field(description="Why, in one or two sentences")
+
+
+def _logged(name: str, coroutine):
+    """Log every tool call with its arguments, size of result and duration.
+
+    The one place a chat turn's database work is visible: without it a slow or
+    failing turn shows only the model's side in the log.
+    """
+
+    async def run(**kwargs):
+        args = {k: v for k, v in kwargs.items() if v is not None}
+        shown = repr(args)
+        if len(shown) > 200:
+            shown = shown[:200] + "..."
+        started = time.monotonic()
+        try:
+            result = await coroutine(**kwargs)
+        except Exception as exc:
+            logger.warning(
+                "chat.tool_failed tool=%s args=%s seconds=%.2f error=%r",
+                name, shown, time.monotonic() - started, exc,
+            )
+            raise
+        logger.info(
+            "chat.tool tool=%s args=%s seconds=%.2f result_chars=%d",
+            name, shown, time.monotonic() - started, len(result),
+        )
+        return result
+
+    run.__name__ = name
+    return run
+
+
+def _plain(value: Any) -> Any:
+    """``DealStage.NEGOTIATION`` -> ``negotiation``, as the snippet stores it."""
+    return value.value if isinstance(value, Enum) else value
 
 
 class ToolRegistry:
@@ -104,16 +161,13 @@ class ToolRegistry:
         return handle
 
     def _record(
-        self, table: str, row_id, field: str, snippet: Any,
-        deal_id: Optional[uuid.UUID] = None,
+        self, table: str, row_id, field: str, snippet: Any, deal_id: uuid.UUID,
     ) -> Dict[str, Any]:
-        if isinstance(snippet, Enum):
-            snippet = snippet.value
         return {
             "source_kind": "record",
-            "deal_id": str(deal_id or row_id) if table == "deals" else str(deal_id),
+            "deal_id": str(deal_id),
             "record_ref": {"table": table, "id": str(row_id), "field": field},
-            "snippet": str(snippet),
+            "snippet": str(_plain(snippet)),
         }
 
     def _entry(self, text: str, citation: Dict[str, Any]) -> Dict[str, Any]:
@@ -138,13 +192,16 @@ class ToolRegistry:
             raise ToolException("deal_id must be a UUID") from exc
 
     @staticmethod
-    def _json(entries) -> str:
-        return json.dumps({"entries": entries}, default=str)
+    def _json(entries, **extra) -> str:
+        return json.dumps({"entries": entries, **extra}, default=str)
 
-    async def search_deals(self, stage=None, stale_days=None, value_min=None) -> str:
-        stmt = select(Deal).order_by(Deal.updated_at.desc()).limit(50)
+    async def search_deals(self, name=None, stage=None, stale_days=None, value_min=None) -> str:
+        stmt = select(Deal).order_by(Deal.updated_at.desc()).limit(SEARCH_DEALS_LIMIT)
         if self.scoped_deal_id is not None:
             stmt = stmt.where(Deal.id == self.scoped_deal_id)
+        if name:
+            pattern = "%%%s%%" % name.replace("%", "\\%").replace("_", "\\_")
+            stmt = stmt.where(Deal.name.ilike(pattern, escape="\\"))
         if stage:
             stmt = stmt.where(Deal.stage == stage)
         if stale_days is not None:
@@ -158,7 +215,7 @@ class ToolRegistry:
                 value = getattr(deal, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "deal %s: %s = %s" % (deal.id, field, value),
+                        "deal %s: %s = %s" % (deal.id, field, _plain(value)),
                         self._record("deals", deal.id, field, value, deal.id),
                     ))
         return self._json(entries)
@@ -170,7 +227,7 @@ class ToolRegistry:
             return self._json([])
         fields = ("name", "stage", "value", "expected_close_date", "last_activity_at")
         return self._json([
-            self._entry("%s = %s" % (field, getattr(deal, field)),
+            self._entry("%s = %s" % (field, _plain(getattr(deal, field))),
                         self._record("deals", deal.id, field, getattr(deal, field), did))
             for field in fields if getattr(deal, field) is not None
         ])
@@ -182,13 +239,26 @@ class ToolRegistry:
             .order_by(Risk.last_seen_at.desc())
         )).all()
         entries = []
+        uncited = []
         for risk in rows:
-            for evidence in await claims_service.evidence_for(
+            evidence_rows = await claims_service.evidence_for(
                 self.db, ClaimType.RISK, risk.id
-            ):
+            )
+            if not evidence_rows:
+                # Still reported -- an open risk the user can see in the app
+                # should not be invisible to the agent -- but without a handle:
+                # a risk is itself a conclusion, so it cannot be its own
+                # evidence.
+                uncited.append({
+                    "severity": _plain(risk.severity),
+                    "title": risk.title,
+                    "note": "No evidence on file. Not citable; say it is unsupported.",
+                })
+                continue
+            for evidence in evidence_rows:
                 entries.append(self._entry(
                     "[%s] %s: %s — source: %s" % (
-                        risk.severity, risk.title, risk.description or "", evidence.snippet,
+                        _plain(risk.severity), risk.title, risk.description or "", evidence.snippet,
                     ),
                     {
                         "source_kind": evidence.source_kind,
@@ -203,7 +273,7 @@ class ToolRegistry:
                         "occurred_at": evidence.occurred_at,
                     },
                 ))
-        return self._json(entries)
+        return self._json(entries, uncited_risks=uncited) if uncited else self._json(entries)
 
     async def list_commitments(self, deal_id=None) -> str:
         did = self._deal(deal_id)
@@ -219,7 +289,7 @@ class ToolRegistry:
                 value = getattr(commitment, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "commitment %s: %s = %s" % (commitment.id, field, value),
+                        "commitment %s: %s = %s" % (commitment.id, field, _plain(value)),
                         self._record("commitments", commitment.id, field, value, did),
                     ))
         return self._json(entries)
@@ -235,7 +305,7 @@ class ToolRegistry:
                 value = getattr(task, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "task %s: %s = %s" % (task.id, field, value),
+                        "task %s: %s = %s" % (task.id, field, _plain(value)),
                         self._record("tasks", task.id, field, value, did),
                     ))
         return self._json(entries)
@@ -252,7 +322,7 @@ class ToolRegistry:
                 value = getattr(row, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "stage event %s: %s = %s" % (row.id, field, value),
+                        "stage event %s: %s = %s" % (row.id, field, _plain(value)),
                         self._record("deal_stage_history", row.id, field, value, did),
                     ))
         meetings = (await self.db.scalars(
@@ -264,7 +334,7 @@ class ToolRegistry:
                 value = getattr(row, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "meeting %s: %s = %s" % (row.id, field, value),
+                        "meeting %s: %s = %s" % (row.id, field, _plain(value)),
                         self._record("meetings", row.id, field, value, did),
                     ))
         return self._json(entries)
@@ -281,19 +351,26 @@ class ToolRegistry:
                 value = getattr(contact, field)
                 if value is not None:
                     entries.append(self._entry(
-                        "contact %s: %s = %s" % (contact.id, field, value),
+                        "contact %s: %s = %s" % (contact.id, field, _plain(value)),
                         self._record("contacts", contact.id, field, value, did),
                     ))
             for field in ("buying_role", "influence"):
                 value = getattr(link, field)
+                # An unset role is absence, not a fact; citing it would put a
+                # handle on the string "None".
+                if value is None:
+                    continue
                 entries.append(self._entry(
-                    "deal contact %s: %s = %s" % (link.id, field, value),
+                    "deal contact %s: %s = %s" % (link.id, field, _plain(value)),
                     self._record("deal_contacts", link.id, field, value, did),
                 ))
         return self._json(entries)
 
     async def search_documents(self, query, deal_id=None) -> str:
         did = self._deal(deal_id)
+        query = (query or "").strip()
+        if not query:
+            raise ToolException("query must not be empty")
         pattern = "%%%s%%" % query.replace("%", "\\%").replace("_", "\\_")
         rows = (await self.db.execute(
             select(DocumentChunk, Document)
@@ -335,14 +412,19 @@ class ToolRegistry:
         reviewer tells agent suggestions from detector ones.
         """
         deal = self._deal(deal_id)
+        title, rationale = (title or "").strip(), (rationale or "").strip()
+        if not 3 <= len(title) <= 200:
+            raise ToolException("title must be 3-200 characters")
+        if len(rationale) < 3:
+            raise ToolException("rationale must be at least 3 characters")
         if await self.db.get(Deal, deal) is None:
             raise ToolException("deal does not exist")
 
         recommendation = Recommendation(
             deal_id=deal,
-            title=title.strip(),
-            description=title.strip(),
-            rationale=rationale.strip(),
+            title=title,
+            description=title,
+            rationale=rationale,
             action_type=ActionType.INTERNAL_ESCALATION.value,
             status=RecommendationStatus.SUGGESTED,
             origin=Origin.AI,
@@ -351,16 +433,24 @@ class ToolRegistry:
         )
         self.db.add(recommendation)
         await self.db.flush()
+        recommendation_id = recommendation.id
+        # Committed now, not with the turn. The tool result below goes into
+        # the checkpointed thread straight away; if the turn later failed and
+        # rolled back, the agent would go on remembering a suggestion that
+        # does not exist.
+        await self.db.commit()
         return json.dumps({
             "created": "recommendation",
-            "id": str(recommendation.id),
+            "id": str(recommendation_id),
             "status": "suggested",
             "note": "Suggested only. A person must accept it before it becomes a task.",
         })
 
     def langchain_tools(self):
         specs = (
-            ("search_deals", self.search_deals, SearchDealsArgs, "Find deals matching pipeline filters."),
+            ("search_deals", self.search_deals, SearchDealsArgs,
+             "Find deals by name, stage, staleness or value. Returns at most %d "
+             "deals, most recently updated first." % SEARCH_DEALS_LIMIT),
             ("get_deal_snapshot", self.get_deal_snapshot, DealArgs, "Get the current fields for one deal."),
             ("list_risks", self.list_risks, DealArgs, "List open risks for a deal."),
             ("list_commitments", self.list_commitments, DealArgs, "List pending commitments for a deal."),
@@ -374,7 +464,7 @@ class ToolRegistry:
         )
         return [
             StructuredTool.from_function(
-                coroutine=coroutine, name=name, description=description,
+                coroutine=_logged(name, coroutine), name=name, description=description,
                 args_schema=args_schema,
             )
             for name, coroutine, args_schema, description in specs

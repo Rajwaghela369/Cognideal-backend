@@ -3,7 +3,7 @@
 Two layers, deliberately:
 
 **The wire schema** (:class:`ExtractionResult`) is what the model must satisfy,
-and it is flat. Groq's strict mode constrains what a schema may look like:
+and it is flat. OpenAI's strict mode constrains what a schema may look like:
 every field must appear in ``required`` and every object must set
 ``additionalProperties: false``. That rules out the obvious design -- a
 free-form ``Dict[str, str]`` payload renders as ``additionalProperties:
@@ -186,12 +186,10 @@ def narrow_payload(fact_type: str, payload: FactPayload) -> Tuple[Optional[dict]
 
 
 def strict_schema_problems(model: Type[BaseModel]) -> List[str]:
-    """Why Groq would reject this schema under ``strict: true``.
+    """Why OpenAI would reject this schema under ``strict: true``.
 
-    Checked here rather than discovered as a 400 in the container: this
-    interpreter's langchain-groq cannot send ``strict`` at all
-    (docs/ai/README.md section 7), so without a local check the constraint
-    would go untested until a deployment that can.
+    Checked here rather than discovered as a 400 at request time, so a schema
+    change that breaks strict mode fails a unit test instead of a pipeline run.
     """
     problems: List[str] = []
 

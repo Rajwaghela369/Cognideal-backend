@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     app_name: str = "CogniDeal API"
     api_prefix: str = "/api"
     debug: bool = True
+    # Console log level for the `cognideal.*` loggers, in the API and the
+    # worker alike (`app/core/logging.py`). Unset, it follows `debug`.
+    log_level: Optional[str] = None
 
     # Origins allowed to call the API from a browser. The Vite dev server
     # proxies /api, so this mainly matters for direct cross-origin calls.
@@ -166,9 +169,9 @@ class Settings(BaseSettings):
 
     # --- Extraction ---
     # Chunks per extraction window. Small on purpose: instruction-following on
-    # open models degrades with input length long before the context window
-    # runs out, and Groq is fast enough that more small calls beat fewer large
-    # ones in wall-clock. Windows do not overlap -- the chunks inside them
+    # models degrades with input length long before the context window runs
+    # out, and more small calls are cheaper to retry than fewer large ones.
+    # Windows do not overlap -- the chunks inside them
     # already do, so coverage is continuous without extracting the same
     # exchange twice.
     extract_window_chunks: int = 4
@@ -197,6 +200,17 @@ class Settings(BaseSettings):
     # meeting starts promptly, high enough that an idle worker is not a
     # busy-loop against Postgres.
     worker_poll_seconds: float = 2.0
+    # A run that crashes (anything but a handled critical-stage failure) is
+    # retried with exponential backoff, then given up on. Without a cap the
+    # same row is re-claimed at once and every attempt pays for model calls
+    # again -- see `worker._Backoff`.
+    worker_max_attempts: int = 3
+    # Run the worker loop inside the API process instead of as its own
+    # service. For hosts with one process only -- Render's free plan has no
+    # Background Worker. The loop is the same; SKIP LOCKED makes it safe even
+    # if a standalone worker is added later alongside it.
+    embedded_worker: bool = False
+    worker_retry_backoff_seconds: float = 30.0
     analysis_debounce_seconds: int = 60
     analysis_max_debounce_seconds: int = 600
     analysis_sweep_hours: int = 24

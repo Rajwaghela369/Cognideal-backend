@@ -173,7 +173,7 @@ def test_thread_id_is_the_session_id():
 
 def test_conninfo_drops_the_sqlalchemy_dialect():
     """psycopg cannot parse `+asyncpg`, and one setting must serve both."""
-    info = checkpointer._conninfo()
+    info = checkpointer.settings.psycopg_database_url
     assert info.startswith("postgresql://")
     assert "+asyncpg" not in info
 

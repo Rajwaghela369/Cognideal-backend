@@ -41,8 +41,11 @@ STAGES: List[Stage] = [
     Stage(8, "supersede_facts", False),        # Phase 6.2
     Stage(9, "synthesize_summary", False),     # Phase 5.2
     Stage(10, "sentiment", False),             # Phase 5.3
-    Stage(11, "finalize", False),              # Phase 5.4
-    Stage(12, "redetect_risks", False),        # Phase 7
+    # Detection before `finalize`, so a detection failure is recorded in
+    # `analysis_error` -- `finalize` is what writes it, and anything after it
+    # could only fail into the log.
+    Stage(11, "redetect_risks", False),        # Phase 7
+    Stage(12, "finalize", False),              # Phase 5.4
 ]
 
 BY_NAME: Dict[str, Stage] = {stage.name: stage for stage in STAGES}

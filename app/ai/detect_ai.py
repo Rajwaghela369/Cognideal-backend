@@ -28,6 +28,7 @@ trust: a badge that oscillates between `high` and `critical` on identical data
 is read as broken.
 """
 
+import json
 import logging
 import re
 import uuid
@@ -251,13 +252,12 @@ async def propose(
         ),
         task="detect",
         prompt_version=prompt.version,
-        # `medium`, measured rather than assumed. At `high` the model spends
-        # its output budget reasoning and never emits the JSON, which Groq
-        # returns as `400 json_validate_failed` with an EMPTY
-        # `failed_generation` -- the shape that means nothing was produced, not
-        # that the schema was wrong. At `low` it found two of the three risks
-        # the SQL rules confirm. `medium` found all three, in ~2.6K output
-        # tokens.
+        # `medium`, measured on a reasoning model rather than assumed. At
+        # `high` the model spent its output budget reasoning and never emitted
+        # the JSON; at `low` it found two of the three risks the SQL rules
+        # confirm; `medium` found all three, in ~2.6K output tokens. Only sent
+        # when the primary role is a reasoning model -- see
+        # `client.is_reasoning_model`.
         reasoning_effort="medium",
         budget=budget,
     )
@@ -398,6 +398,9 @@ async def apply(
         if current is not None:
             current.last_seen_at = func.now()
             current.severity = severity
+            # Proposed again means present: a pending first strike towards
+            # resolution no longer stands.
+            current.description = _without_marker(current.description)
             current.model = client.model_for(client.ROLE_PRIMARY)
             current.detector_version = DETECTOR_VERSION
             await _persist_grounding(
@@ -503,9 +506,41 @@ async def _ground(db, claim_text, entries, *, budget=None):
     return surviving, validation
 
 
+def _evidence_key(source_kind, chunk_id, char_start, char_end, record_ref, snippet):
+    """What makes two citations the same citation, whatever types they arrive in."""
+    return (
+        str(getattr(source_kind, "value", source_kind)),
+        str(chunk_id) if chunk_id else None,
+        char_start,
+        char_end,
+        json.dumps(record_ref, sort_keys=True, default=str) if record_ref else None,
+        snippet,
+    )
+
+
 async def _persist_grounding(db, deal_id, claim_type, claim_id, grounding) -> None:
+    """Attach the grounding's citations and record its verdict.
+
+    Citations the claim already carries are skipped. A risk re-detected on
+    every run used to gain a fresh copy of each citation every time --
+    ``attach_evidence`` always inserts -- so a daily sweep piled duplicates
+    onto the panel and into the chat's ``list_risks``. The verdict is still
+    recorded each run: that table is a history, and the newest one counts.
+    """
     surviving, validation = grounding
+    have = {
+        _evidence_key(row.source_kind, row.chunk_id, row.char_start, row.char_end,
+                      row.record_ref, row.snippet)
+        for row in await claims_service.evidence_for(db, claim_type, claim_id)
+    }
+    added = 0
     for entry, link in surviving:
+        key = _evidence_key(entry.source_kind, entry.chunk_id, entry.char_start,
+                            entry.char_end, entry.record_ref, entry.snippet)
+        if key in have:
+            continue
+        have.add(key)
+        added += 1
         await claims_service.attach_evidence(
             db,
             claim_type=claim_type,
@@ -521,6 +556,10 @@ async def _persist_grounding(db, deal_id, claim_type, claim_id, grounding) -> No
             speaker=entry.speaker,
             occurred_at=entry.occurred_at,
             verification_status=link.status,
+        )
+    if added:
+        logger.debug(
+            "detect.evidence_attached claim=%s:%s added=%d", claim_type.value, claim_id, added
         )
     await claims_service.record_validation(
         db,
@@ -546,11 +585,15 @@ async def _apply_verdicts(db, result: DetectionResult, dossier, *, budget=None) 
     """
     for risk_id, verdict in result.verdicts.items():
         risk = dossier.open_risks.get(risk_id)
-        if (
-            risk is None
-            or verdict != "resolved"
-            or risk.risk_type in _RULE_TYPES
-        ):
+        if risk is None or risk.risk_type in _RULE_TYPES:
+            continue
+        if verdict != "resolved":
+            # Two *consecutive* resolutions: anything else in between breaks
+            # the run, or two lucky passes months apart could close a risk
+            # that was reported present in between.
+            if _RESOLUTION_MARKER in (risk.description or ""):
+                risk.description = _without_marker(risk.description)
+                logger.info("detect.resolution_strike_reset risk=%s verdict=%s", risk.id, verdict)
             continue
         entries = result.verdict_evidence.get(risk_id) or []
         grounding = await _ground(
@@ -564,18 +607,27 @@ async def _apply_verdicts(db, result: DetectionResult, dossier, *, budget=None) 
             continue
         # `description` carries the strike because there is nowhere else to put
         # it without a migration; replace with a column if this outlives Phase 7.
-        marker = "[resolution-proposed]"
-        if marker in (risk.description or ""):
+        if _RESOLUTION_MARKER in (risk.description or ""):
             risk.status = RiskStatus.RESOLVED
             risk.resolved_at = func.now()
-            risk.description = (risk.description or "").replace(marker, "").strip()
+            risk.description = _without_marker(risk.description)
+            logger.info("detect.risk_resolved risk=%s title=%r", risk.id, risk.title)
             await _persist_grounding(
                 db, risk.deal_id, ClaimType.RISK, risk.id, grounding
             )
             result.resolved.append(risk.id)
         else:
-            risk.description = "%s %s" % (risk.description or "", marker)
+            risk.description = "%s %s" % (risk.description or "", _RESOLUTION_MARKER)
             logger.info("detect.resolution_first_strike risk=%s", risk.id)
+
+
+_RESOLUTION_MARKER = "[resolution-proposed]"
+
+
+def _without_marker(description: Optional[str]) -> Optional[str]:
+    if not description or _RESOLUTION_MARKER not in description:
+        return description
+    return description.replace(_RESOLUTION_MARKER, "").strip()
 
 
 # --------------------------------------------------------------------------

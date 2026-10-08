@@ -39,11 +39,10 @@ class _Chunk:
 # --------------------------------------------------------------------------
 
 
-def test_the_wire_schema_satisfies_groqs_strict_mode():
-    """Checked locally because this interpreter's client cannot send `strict`.
+def test_the_wire_schema_satisfies_openai_strict_mode():
+    """Checked locally so a schema change that breaks strict mode fails here.
 
-    Without the check the constraint would go untested until a deployment that
-    can send it -- and then fail as a 400 with no local reproduction.
+    Otherwise it would surface only as a 400 from OpenAI at request time.
     """
     assert strict_schema_problems(ExtractionResult) == []
 

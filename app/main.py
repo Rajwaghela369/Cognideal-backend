@@ -1,14 +1,77 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.config import settings
+from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 
 
+configure_logging()
+logger = logging.getLogger("cognideal.main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown for the parts that are not request-scoped.
+
+    The chat checkpointer's tables are created before the first chat turn, so
+    no user's first message waits on DDL -- and a client that gives up on that
+    message cannot cancel the migration half-way. Failure is logged, not
+    raised: the REST layer works without AI, and ``checkpointer.saver()``
+    retries setup on the next chat turn.
+
+    With ``embedded_worker`` the analysis worker runs here as a background
+    task, for hosts that cannot run it as its own service.
+    """
+    if settings.ai_enabled:
+        from app.ai import checkpointer
+
+        try:
+            await checkpointer.saver()
+        except Exception:  # noqa: BLE001 -- retried lazily by the first chat turn
+            logger.exception("checkpointer.startup_setup_failed")
+
+    worker_task = None
+    if settings.embedded_worker:
+        # Imported here: `worker` lives at the repo root, and an API that does
+        # not embed it should not load the analysis graph at all.
+        import worker
+
+        worker_task = asyncio.create_task(
+            worker.run_forever(embedded=True), name="embedded-worker"
+        )
+        logger.info("worker.embedded_started")
+
+    yield
+
+    if worker_task is not None:
+        import worker
+
+        worker.stop()
+        try:
+            # Let the current unit of work finish if it can; Render allows
+            # about 30 seconds after SIGTERM. A run cut short is rolled back
+            # and stays queued, so the next start picks it up.
+            await asyncio.wait_for(worker_task, timeout=20)
+        except asyncio.TimeoutError:
+            worker_task.cancel()
+            logger.warning("worker.embedded_cancelled -- in-flight run rolled back, stays queued")
+        except Exception:  # noqa: BLE001 -- shutting down regardless
+            logger.exception("worker.embedded_stop_failed")
+    if settings.ai_enabled:
+        from app.ai import checkpointer
+
+        await checkpointer.close()
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.app_name, debug=settings.debug)
+    app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

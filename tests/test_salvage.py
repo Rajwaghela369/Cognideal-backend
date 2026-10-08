@@ -129,21 +129,8 @@ def test_too_many_strays_is_a_lost_response_not_a_salvage():
 
 
 # --------------------------------------------------------------------------
-# Reading the rejected text off each failure shape
+# Reading the rejected text off a completion
 # --------------------------------------------------------------------------
-
-
-def test_failed_generation_is_read_from_a_groq_400():
-    exc = Exception("400")
-    exc.body = {"error": {"code": "json_validate_failed", "failed_generation": '{"risks":[]}'}}
-    assert client._failed_generation(exc) == '{"risks":[]}'
-
-
-def test_an_unrelated_400_carries_nothing_to_salvage():
-    exc = Exception("400")
-    exc.body = {"error": {"code": "rate_limit_exceeded", "message": "slow down"}}
-    assert client._failed_generation(exc) is None
-    assert client._failed_generation(Exception("boom")) is None
 
 
 def test_content_is_read_from_a_completion_that_arrived():

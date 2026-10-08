@@ -141,7 +141,7 @@ async def live(deal_name, n):
                 # A run that raises is a *measurement*, not a reason to abandon
                 # the sample -- and it is the most consequential kind of
                 # instability there is. The first ten-run sample lost run 3 to
-                # Groq `json_validate_failed` (the model emitted a stray
+                # a schema rejection (the model emitted a stray
                 # `"{""risk_type"` mid-array), which means the panel renders
                 # nothing at all on that pass. Aborting here would have thrown
                 # away the two good runs and, worse, reported the detector as

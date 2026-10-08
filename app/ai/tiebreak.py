@@ -48,7 +48,9 @@ def _render(candidates: List[Candidate]) -> str:
     )
 
 
-async def resolve_ambiguous(resolution: Resolution) -> Resolution:
+async def resolve_ambiguous(
+    resolution: Resolution, *, budget: Optional[client.RunBudget] = None
+) -> Resolution:
     """Ask the model to settle one ambiguous name. Mutates nothing in the DB.
 
     Returns the resolution unchanged if AI is off, if there is nothing to
@@ -69,6 +71,7 @@ async def resolve_ambiguous(resolution: Resolution) -> Resolution:
             prompt_version=prompt.version,
             role=client.ROLE_CHEAP,
             reasoning_effort="low",
+            budget=budget,
         )
     except client.AIDisabled:
         # Not an error. Resolution is meant to work with the provider off.
