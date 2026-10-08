@@ -21,10 +21,19 @@ from app.schemas.v1.chat import (
     ChatSessionCreate,
     ChatSessionResponse,
     ChatSessionUpdate,
+    ChatUsage,
 )
-from app.services import chat_actions, claims
+from app.services import chat_actions, chat_usage, claims
 
 router = APIRouter(prefix="/chat/sessions", tags=["chat"])
+#: Chat-wide, not about one session.
+usage_router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+@usage_router.get("/usage", response_model=ChatUsage)
+async def get_usage(db: AsyncSession = Depends(get_db)) -> Any:
+    """Today's questions against the daily limit -- what the usage bar shows."""
+    return await chat_usage.usage(db)
 
 
 async def _session_or_404(db: AsyncSession, session_id: uuid.UUID) -> ChatSession:
@@ -159,6 +168,10 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     session = await _session_or_404(db, session_id)
+    # Checked before the stream opens, so a refusal is a real 429 the UI can
+    # act on rather than an error event inside a 200. Holds a transaction
+    # lock that the turn's first commit (the question itself) releases.
+    await chat_usage.reserve_question(db)
 
     async def events():
         async for event in chat_agent.stream_turn(

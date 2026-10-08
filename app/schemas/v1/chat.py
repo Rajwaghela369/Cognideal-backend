@@ -94,6 +94,19 @@ class ChatActionApply(BaseModel):
     fields: Optional[dict] = None
 
 
+class ChatUsage(BaseModel):
+    """Today's chat questions against the shared daily limit."""
+
+    #: 0 when the limit is switched off.
+    limit: int
+    used: int
+    #: None when unlimited.
+    remaining: Optional[int] = None
+    #: Next midnight in ``timezone``, when ``used`` starts again from 0.
+    resets_at: datetime
+    timezone: str
+
+
 class ChatMessageResponse(BaseModel):
     model_config = ORM
 

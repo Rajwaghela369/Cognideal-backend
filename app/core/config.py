@@ -234,6 +234,12 @@ class Settings(BaseSettings):
     # exchanges. The real spend ceiling is `ai_max_tokens_chat` plus RunBudget;
     # this exists to stop unbounded growth in a long session.
     chat_history_messages: int = 14
+    # Questions the chat assistant answers per day, across everyone -- there
+    # are no user accounts, so the cap is shared. Counts user messages only:
+    # meeting analysis, briefs and risk detection never touch chat. 0 means
+    # unlimited. The day starts at midnight in `chat_limit_timezone`.
+    chat_daily_message_limit: int = 200
+    chat_limit_timezone: str = "Europe/Berlin"
     # Separate from the SQLAlchemy pool: the checkpointer speaks psycopg, not
     # asyncpg, so it cannot share one. Small on purpose -- it serves chat turns
     # only, and each turn holds a connection briefly.

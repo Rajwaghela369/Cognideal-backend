@@ -14,5 +14,6 @@ api_router.include_router(tasks.router)
 # which holds a deal id.
 api_router.include_router(documents.router)
 api_router.include_router(chat.router)
+api_router.include_router(chat.usage_router)
 # Not about any one deal: configuration, token budget and queue depth.
 api_router.include_router(system.router)
