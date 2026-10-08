@@ -78,4 +78,8 @@ class ChatMessage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     )
     model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     token_usage: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: Tasks and meetings this answer drafted for the user to confirm -- see
+    #: migration 0017 and ``services/chat_actions.py``. NULL when it drafted
+    #: none. Replace the list to change it: JSONB is not mutation-tracked.
+    actions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

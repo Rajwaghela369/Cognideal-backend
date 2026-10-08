@@ -10,14 +10,27 @@ The distinction it preserves is the product: `risk -> recommendation -> [human
 accepts] -> task`. An agent that could write a `task` would be doing the
 deciding; one that can only suggest is proposing. There is no update tool and no
 delete tool, and `propose_task` cannot touch any row that already exists.
+
+`draft_task` and `draft_meeting` keep that rule while letting the assistant set
+up work the user asked for. They write **nothing**: each records a draft on the
+registry, the turn saves it on the answer (`chat_messages.actions`), and the UI
+shows it as a card. The row exists only once the user clicks Create, which runs
+`services/chat_actions.py` -- the same creation code as the REST routes.
 """
 
 import json
 import logging
 import time
 import uuid
+from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+try:  # Python 3.9+ stdlib; tzdata supplies the database where the OS does not.
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment]
+    ZoneInfoNotFoundError = Exception  # type: ignore[assignment,misc]
 
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, Field
@@ -43,11 +56,14 @@ from app.models.enums import (
     ClaimType,
     CommitmentStatus,
     DealStage,
+    MeetingType,
     Origin,
+    Priority,
     RecommendationStatus,
     RiskStatus,
 )
 from app.services import claims as claims_service
+from app.services import roster
 
 #: Distinguishes a chat-proposed recommendation from a detector-proposed one in
 #: `recommendations.detector_version`. Bump it when the tool's contract changes,
@@ -87,12 +103,66 @@ class SearchDocumentsArgs(DealArgs):
     query: str = Field(description="Exact text to find, matched case-insensitively")
 
 
+class DraftTaskArgs(DealArgs):
+    title: str = Field(description="What to do, imperative, under 255 characters")
+    description: Optional[str] = Field(description="Detail or context, or null")
+    due_date: Optional[str] = Field(
+        description="Due date as YYYY-MM-DD in the user's timezone, or null"
+    )
+    priority: Optional[Priority] = Field(description="low, medium, high or urgent; null for medium")
+
+
+class DraftMeetingArgs(DealArgs):
+    title: str = Field(description="Meeting title, under 255 characters")
+    meeting_type: Optional[MeetingType] = Field(description="Kind of meeting; null for other")
+    scheduled_at: Optional[str] = Field(
+        description=(
+            "Start as local date and time in the user's timezone, "
+            "YYYY-MM-DDTHH:MM, or null if no time was given"
+        )
+    )
+    attendees: Optional[List[str]] = Field(
+        description="People to invite, by name as the user said them, or null"
+    )
+
+
+#: Drafts per turn. A request for "a meeting and two tasks" fits; a model
+#: drafting in a loop does not.
+MAX_DRAFTS_PER_TURN = 5
+
+
 class ProposeTaskArgs(DealArgs):
     """No `status`, no `priority`, no ids of existing rows. The model supplies
     prose and nothing structural."""
 
     title: str = Field(description="The action to take, imperative, 3-200 characters")
     rationale: str = Field(description="Why, in one or two sentences")
+
+
+def user_timezone(name: Optional[str]):
+    """The user's timezone, or UTC when it is missing or unknown."""
+    if name and ZoneInfo is not None:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.info("chat.timezone_unknown name=%r -- using UTC", name)
+    return timezone.utc
+
+
+def parse_local_datetime(raw: str, tz) -> datetime:
+    """``2026-10-14T15:00`` in the user's timezone -> an aware datetime.
+
+    An explicit offset (``+02:00`` or ``Z``) is honoured; a naive value is the
+    user's local time, which is what "Tuesday at 3pm" means.
+    """
+    text = raw.strip().replace(" ", "T", 1)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ToolException("scheduled_at must be YYYY-MM-DDTHH:MM") from exc
+    return value.replace(tzinfo=tz) if value.tzinfo is None else value
 
 
 def _logged(name: str, coroutine):
@@ -139,10 +209,15 @@ class ToolRegistry:
         db: AsyncSession,
         scoped_deal_id: Optional[uuid.UUID],
         handle_offset: int = 0,
+        timezone_name: Optional[str] = None,
     ) -> None:
         self.db = db
         self.scoped_deal_id = scoped_deal_id
         self.evidence: Dict[str, Dict[str, Any]] = {}
+        #: Drafted tasks and meetings, in order. `chat.stream_turn` streams
+        #: each to the UI as it appears and saves the list on the answer.
+        self.actions: List[Dict[str, Any]] = []
+        self.tz = user_timezone(timezone_name)
         # Where this turn's handles start. A registry is per-turn, so without an
         # offset every turn reissues `e1` -- fine while the agent had no memory
         # of earlier turns, and wrong now that the checkpointer replays earlier
@@ -396,6 +471,130 @@ class ToolRegistry:
             ) for chunk, doc in rows
         ])
 
+    def _next_action_id(self) -> str:
+        if len(self.actions) >= MAX_DRAFTS_PER_TURN:
+            raise ToolException(
+                "at most %d drafts per answer; ask the user to confirm these first"
+                % MAX_DRAFTS_PER_TURN
+            )
+        return "a%d" % (len(self.actions) + 1)
+
+    async def _draft_deal(self, deal_id: Optional[str]) -> Deal:
+        deal = await self.db.get(Deal, self._deal(deal_id))
+        if deal is None:
+            raise ToolException("deal does not exist")
+        return deal
+
+    def _today(self) -> date:
+        return datetime.now(self.tz).date()
+
+    def _record_draft(self, kind: str, deal: Deal, fields: Dict[str, Any]) -> Dict[str, Any]:
+        action = {
+            "id": self._next_action_id(),
+            "kind": kind,
+            "status": "proposed",
+            "deal_id": str(deal.id),
+            "deal_name": deal.name,
+            "fields": fields,
+            "created_id": None,
+            "decided_at": None,
+        }
+        self.actions.append(action)
+        logger.info(
+            "chat.action_drafted kind=%s action=%s deal=%s fields=%s",
+            kind, action["id"], deal.id, fields,
+        )
+        return action
+
+    @staticmethod
+    def _draft_result(action: Dict[str, Any]) -> str:
+        return json.dumps({
+            "drafted": action["kind"],
+            "action_id": action["id"],
+            "deal": action["deal_name"],
+            "fields": action["fields"],
+            "note": (
+                "NOT created. The user sees this as a card and must click Create. "
+                "Tell them it is ready to confirm; never say it was created."
+            ),
+        }, default=str)
+
+    async def draft_task(
+        self, title, description=None, due_date=None, priority=None, deal_id=None
+    ) -> str:
+        """Draft a task for the user to confirm. Writes nothing."""
+        deal = await self._draft_deal(deal_id)
+        title = (title or "").strip()
+        if not 1 <= len(title) <= 255:
+            raise ToolException("title must be 1-255 characters")
+        due = None
+        if due_date:
+            try:
+                due = date.fromisoformat(due_date.strip()[:10])
+            except ValueError as exc:
+                raise ToolException("due_date must be YYYY-MM-DD") from exc
+            if due < self._today():
+                raise ToolException(
+                    "due_date %s is in the past; today is %s" % (due, self._today())
+                )
+        action = self._record_draft("task", deal, {
+            "title": title,
+            "description": (description or "").strip() or None,
+            "due_date": due.isoformat() if due else None,
+            "priority": _plain(priority) if priority else Priority.MEDIUM.value,
+        })
+        return self._draft_result(action)
+
+    async def draft_meeting(
+        self, title, meeting_type=None, scheduled_at=None, attendees=None, deal_id=None
+    ) -> str:
+        """Draft a meeting for the user to confirm. Writes nothing.
+
+        Attendee names are matched to the deal account's contacts the same way
+        transcript speakers are (``roster.resolve``); a confident match carries
+        its ``contact_id``, anything else stays a raw name.
+        """
+        deal = await self._draft_deal(deal_id)
+        title = (title or "").strip()
+        if not 1 <= len(title) <= 255:
+            raise ToolException("title must be 1-255 characters")
+
+        when = None
+        if scheduled_at:
+            when = parse_local_datetime(scheduled_at, self.tz)
+            if when < datetime.now(timezone.utc):
+                raise ToolException(
+                    "scheduled_at %s is in the past; it is now %s"
+                    % (when.isoformat(), datetime.now(self.tz).strftime("%Y-%m-%d %H:%M"))
+                )
+
+        people = []
+        for raw in (attendees or [])[:20]:
+            name = roster.normalise(str(raw))
+            if not name:
+                continue
+            resolution = await roster.resolve(self.db, deal.account_id, name)
+            contact_name = None
+            if resolution.decision == roster.LINKED and resolution.contact_id:
+                contact = await self.db.get(Contact, resolution.contact_id)
+                if contact is not None:
+                    contact_name = " ".join(
+                        part for part in (contact.first_name, contact.last_name) if part
+                    )
+            people.append({
+                "raw_name": name,
+                "contact_id": str(resolution.contact_id) if contact_name else None,
+                "contact_name": contact_name,
+            })
+
+        action = self._record_draft("meeting", deal, {
+            "title": title,
+            "meeting_type": _plain(meeting_type) if meeting_type else MeetingType.OTHER.value,
+            "scheduled_at": when.isoformat() if when else None,
+            "attendees": people,
+        })
+        return self._draft_result(action)
+
     async def propose_task(self, title, rationale, deal_id=None) -> str:
         """The one write: a suggestion for a human to accept or dismiss.
 
@@ -458,6 +657,14 @@ class ToolRegistry:
             ("get_timeline", self.get_timeline, DealArgs, "List recent stage and meeting events."),
             ("get_stakeholder_map", self.get_stakeholder_map, DealArgs, "List stakeholders and buying roles."),
             ("search_documents", self.search_documents, SearchDocumentsArgs, "Search exact text in this deal's documents."),
+            ("draft_task", self.draft_task, DraftTaskArgs,
+             "Draft a task the user asked for. Creates NOTHING: the user sees a "
+             "card and clicks Create. Use when the user asks you to create, add "
+             "or set up a task."),
+            ("draft_meeting", self.draft_meeting, DraftMeetingArgs,
+             "Draft a meeting the user asked for. Creates NOTHING: the user sees "
+             "a card and clicks Create. Use when the user asks you to schedule, "
+             "book or set up a meeting or call."),
             ("propose_task", self.propose_task, ProposeTaskArgs,
              "Suggest an action for the user to accept or dismiss. Creates a "
              "suggestion only -- it does NOT create a task or change any record."),

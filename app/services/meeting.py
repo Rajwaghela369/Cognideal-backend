@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Contact, Deal, DealContact, Meeting, MeetingAttendee
 from app.models.enums import AnalysisStatus, MeetingStatus
+from app.schemas.v1.deal.meeting import MeetingCreate
 from app.services import activity
 
 
@@ -98,6 +99,22 @@ async def apply_status_change(
     elif to_status == MeetingStatus.SCHEDULED and was_completed:
         meeting.started_at = None
         meeting.ended_at = None
+
+
+async def create_meeting(db: AsyncSession, deal_id: uuid.UUID, body: MeetingCreate) -> Meeting:
+    """Create one meeting: the single path for ``POST .../meetings`` and chat
+    drafts.
+
+    Built as scheduled, then moved -- so a meeting logged as already held gets
+    its ``ended_at`` (and its analysis triggers) from :func:`apply_status_change`.
+    """
+    payload = body.model_dump()
+    to_status = payload.pop("status")
+    meeting = Meeting(deal_id=deal_id, status=MeetingStatus.SCHEDULED, **payload)
+    db.add(meeting)
+    await apply_status_change(db, meeting, to_status)
+    await db.flush()
+    return meeting
 
 
 async def queue_analysis(

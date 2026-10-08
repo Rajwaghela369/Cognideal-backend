@@ -129,7 +129,11 @@ async def test_all_read_tools_return_evidence_handles(db, deal_id):
     # and the only tool that returns no evidence handle -- it creates a row
     # rather than citing one, so it is excluded from the loop below. Asserted as
     # an exact set so a tenth tool cannot appear unnoticed.
-    assert {tool.name for tool in tools} == READ_TOOLS | {"propose_task"}
+    # `draft_task` / `draft_meeting` write nothing -- they record a draft the
+    # user confirms -- so `propose_task` is still the only tool that writes.
+    assert {tool.name for tool in tools} == READ_TOOLS | {
+        "propose_task", "draft_task", "draft_meeting",
+    }
     outputs = [
         await registry.search_deals(),
         await registry.get_deal_snapshot(),

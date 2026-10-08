@@ -47,6 +47,10 @@ class ChatMessageCreate(BaseModel):
     model_config = WRITE
 
     content: str = Field(min_length=1, max_length=20_000)
+    #: The browser's IANA timezone, e.g. "Europe/Berlin". The assistant needs
+    #: it to turn "Friday at 3pm" into a date and time; unknown values fall
+    #: back to UTC rather than failing the message.
+    timezone: Optional[str] = Field(default=None, max_length=64)
 
 
 class ChatCitation(BaseModel):
@@ -58,6 +62,36 @@ class ChatCitation(BaseModel):
     record_ref: Optional[dict] = None
     char_start: Optional[int] = None
     char_end: Optional[int] = None
+
+
+class ChatAction(BaseModel):
+    """A task or meeting the assistant drafted, and what became of it.
+
+    ``fields`` is the draft as the card shows it: for a task ``title``,
+    ``description``, ``due_date``, ``priority``; for a meeting ``title``,
+    ``meeting_type``, ``scheduled_at`` and ``attendees``.
+    """
+
+    id: str
+    kind: str
+    status: str
+    deal_id: uuid.UUID
+    deal_name: Optional[str] = None
+    fields: dict
+    created_id: Optional[uuid.UUID] = None
+    decided_at: Optional[datetime] = None
+
+
+class ChatActionApply(BaseModel):
+    """Create a drafted action, optionally with the user's edits.
+
+    ``fields`` overrides the draft's values, key by key. Only the editable
+    keys are accepted -- see ``services/chat_actions.EDITABLE``.
+    """
+
+    model_config = WRITE
+
+    fields: Optional[dict] = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -73,3 +107,4 @@ class ChatMessageResponse(BaseModel):
     latency_ms: Optional[int] = None
     created_at: datetime
     citations: List[ChatCitation] = Field(default_factory=list)
+    actions: List[ChatAction] = Field(default_factory=list)

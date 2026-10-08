@@ -14,13 +14,15 @@ from app.db.session import get_db
 from app.models import ChatMessage, ChatSession, Deal
 from app.models.enums import ClaimType
 from app.schemas.v1.chat import (
+    ChatAction,
+    ChatActionApply,
     ChatMessageCreate,
     ChatMessageResponse,
     ChatSessionCreate,
     ChatSessionResponse,
     ChatSessionUpdate,
 )
-from app.services import claims
+from app.services import chat_actions, claims
 
 router = APIRouter(prefix="/chat/sessions", tags=["chat"])
 
@@ -145,6 +147,7 @@ async def list_messages(
             }
             for index, item in enumerate(evidence)
         ]
+        payload["actions"] = row.actions or []
         out.append(payload)
     return out
 
@@ -158,7 +161,9 @@ async def send_message(
     session = await _session_or_404(db, session_id)
 
     async def events():
-        async for event in chat_agent.stream_turn(db, session, body.content):
+        async for event in chat_agent.stream_turn(
+            db, session, body.content, timezone_name=body.timezone
+        ):
             yield "data: %s\n\n" % event
 
     # No caching, and no proxy buffering: a buffering proxy holds the deltas
@@ -168,3 +173,43 @@ async def send_message(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# --------------------------------------------------------------------------
+# Drafted actions -- the user's Create / Cancel on a card
+# --------------------------------------------------------------------------
+
+
+@router.post(
+    "/{session_id}/messages/{message_id}/actions/{action_id}/apply",
+    response_model=ChatAction,
+)
+async def apply_action(
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    action_id: str,
+    body: ChatActionApply,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Create the task or meeting an answer drafted, with the user's edits.
+
+    Idempotent: a draft already created returns the row it made. See
+    ``services/chat_actions.py``.
+    """
+    session = await _session_or_404(db, session_id)
+    return await chat_actions.apply_action(db, session, message_id, action_id, body.fields)
+
+
+@router.post(
+    "/{session_id}/messages/{message_id}/actions/{action_id}/cancel",
+    response_model=ChatAction,
+)
+async def cancel_action(
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    action_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Dismiss a draft without creating anything."""
+    session = await _session_or_404(db, session_id)
+    return await chat_actions.cancel_action(db, session, message_id, action_id)

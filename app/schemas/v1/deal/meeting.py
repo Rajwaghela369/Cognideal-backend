@@ -97,6 +97,14 @@ class MeetingAnalysis(BaseModel):
     #: facts, and the screen should be able to say so rather than implying the
     #: analysis was clean. Written by stages.finalize.
     analysis_error: Optional[str] = None
+    #: What the run produced, for the completion notice. Only filled in once
+    #: the status is `complete`, so polling a queued run stays one row read.
+    #: `facts_count` is this meeting's extracted facts, `evidence_count` the
+    #: citations attached to them, and `open_risks_count` the deal's open
+    #: risks after the run (detection reads the whole deal, not one meeting).
+    facts_count: Optional[int] = None
+    evidence_count: Optional[int] = None
+    open_risks_count: Optional[int] = None
 
 
 class MeetingBriefResponse(BaseModel):

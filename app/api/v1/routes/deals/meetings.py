@@ -7,6 +7,7 @@ than a necessity -- the cost is that every handler must confirm the meeting
 belongs to the deal named in the path, which get_meeting_or_404 does once.
 """
 
+import logging
 import uuid
 from typing import Any, List
 
@@ -18,8 +19,16 @@ from typing_extensions import Annotated
 
 from app.api.deps import get_deal_or_404
 from app.db.session import get_db
-from app.models import Account, Deal, Meeting, MeetingAttendee
-from app.models.enums import AnalysisStatus, MeetingStatus
+from app.models import (
+    Account,
+    ClaimEvidence,
+    Deal,
+    ExtractedFact,
+    Meeting,
+    MeetingAttendee,
+    Risk,
+)
+from app.models.enums import AnalysisStatus, ClaimType, MeetingStatus, RiskStatus
 from app.schemas.v1.deal.meeting import (
     AnalysisRequest,
     BriefRequest,
@@ -34,6 +43,8 @@ from app.schemas.v1.deal.meeting import (
 from app.services import meeting as meeting_service
 from app.services import analysis as analysis_service
 from app.ai import brief as brief_service
+
+logger = logging.getLogger("cognideal.api.meetings")
 
 router = APIRouter(prefix="/deals/{deal_id}/meetings", tags=["meetings"])
 
@@ -181,13 +192,8 @@ async def create_meeting(
     deal: Deal = Depends(get_deal_or_404),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    payload = body.model_dump()
-    to_status = payload.pop("status")
-    # Built as scheduled, then moved -- so a meeting logged as already held
-    # gets its ended_at from the one place that knows the rule.
-    meeting = Meeting(deal_id=deal.id, status=MeetingStatus.SCHEDULED, **payload)
-    db.add(meeting)
-    await meeting_service.apply_status_change(db, meeting, to_status)
+    # The one creation path, shared with the chat's confirmed drafts.
+    meeting = await meeting_service.create_meeting(db, deal.id, body)
     await db.commit()
 
     response.headers["Location"] = f"/deals/{deal.id}/meetings/{meeting.id}"
@@ -269,8 +275,8 @@ async def delete_meeting(
 # --------------------------------------------------------------------------
 
 
-def _analysis_payload(meeting: Meeting) -> dict:
-    return {
+async def _analysis_payload(db: AsyncSession, meeting: Meeting) -> dict:
+    payload = {
         "meeting_id": meeting.id,
         "analysis_status": meeting.analysis_status,
         "analyzed_at": meeting.analyzed_at,
@@ -279,12 +285,31 @@ def _analysis_payload(meeting: Meeting) -> dict:
         "has_transcript": meeting.transcript_document_id is not None,
         "analysis_error": meeting.analysis_error,
     }
+    if meeting.analysis_status == AnalysisStatus.COMPLETE:
+        fact_ids = select(ExtractedFact.id).where(ExtractedFact.meeting_id == meeting.id)
+        payload["facts_count"] = await db.scalar(
+            select(func.count()).select_from(fact_ids.subquery())
+        )
+        payload["evidence_count"] = await db.scalar(
+            select(func.count()).select_from(ClaimEvidence).where(
+                ClaimEvidence.claim_type == ClaimType.FACT,
+                ClaimEvidence.claim_id.in_(fact_ids),
+            )
+        )
+        payload["open_risks_count"] = await db.scalar(
+            select(func.count()).select_from(Risk).where(
+                Risk.deal_id == meeting.deal_id, Risk.status == RiskStatus.OPEN
+            )
+        )
+    return payload
 
 
 @router.get("/{meeting_id}/analysis", response_model=MeetingAnalysis)
-async def get_analysis(meeting: Meeting = Depends(get_meeting)) -> Any:
+async def get_analysis(
+    meeting: Meeting = Depends(get_meeting), db: AsyncSession = Depends(get_db)
+) -> Any:
     """What the Meeting Analyzer screen polls."""
-    return _analysis_payload(meeting)
+    return await _analysis_payload(db, meeting)
 
 
 @router.post(
@@ -310,7 +335,7 @@ async def request_analysis(
     await meeting_service.queue_analysis(db, meeting, body.transcript_document_id)
     await db.commit()
     await db.refresh(meeting)
-    return _analysis_payload(meeting)
+    return await _analysis_payload(db, meeting)
 
 
 @router.get("/{meeting_id}/brief", response_model=MeetingBriefResponse)
@@ -334,13 +359,24 @@ async def generate_brief(
     meeting: Meeting = Depends(get_meeting),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
+    from app.ai.client import AIDisabled
+
+    meeting_id = meeting.id
     try:
         brief = await brief_service.generate(db, meeting, force=body.force)
-    except Exception as exc:
-        from app.ai.client import AIDisabled
-        if isinstance(exc, AIDisabled):
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-        raise
-    await db.commit()
-    await db.refresh(brief)
+        await db.commit()
+        await db.refresh(brief)
+    except AIDisabled as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+        # A model or database failure used to escape as a bare 500, which the
+        # UI can only show as "Request failed with status 500". Logged with
+        # the traceback, and returned with its cause so the screen says why.
+        await db.rollback()
+        logger.exception("brief.generate_failed meeting=%s", meeting_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not generate the brief: %s: %s" % (type(exc).__name__, exc),
+        )
+    logger.info("brief.generated meeting=%s force=%s", meeting_id, body.force)
     return brief

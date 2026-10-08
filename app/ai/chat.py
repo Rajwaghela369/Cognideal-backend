@@ -6,7 +6,8 @@ import logging
 import re
 import time
 import uuid
-from typing import AsyncIterator
+from datetime import datetime
+from typing import AsyncIterator, Optional
 
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.prebuilt import create_react_agent
@@ -57,7 +58,10 @@ def _text(chunk) -> str:
 
 
 async def stream_turn(
-    db: AsyncSession, session: ChatSession, question: str
+    db: AsyncSession,
+    session: ChatSession,
+    question: str,
+    timezone_name: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Persist first, stream deltas, then ground only handles actually cited."""
     session_id = session.id
@@ -99,6 +103,7 @@ async def stream_turn(
         # earlier to whatever this turn's registry put at that number. Seeded
         # past every handle the session has already issued.
         handle_offset=await _handles_issued(db, session_id),
+        timezone_name=timezone_name,
     )
     scope_note = (
         "This conversation is locked to deal %s. Never ask for or use another deal id."
@@ -113,6 +118,12 @@ async def stream_turn(
         "tools. Clearly label advice or inference as such. The only change you can "
         "make is propose_task, which files a suggestion for the user to accept or "
         "dismiss; never claim a task was created or any record was changed. "
+        "When the user asks you to create a task or schedule a meeting, call "
+        "draft_task or draft_meeting: they create nothing, the user confirms each "
+        "on a card. Say the draft is ready to confirm, never that it was created. "
+        "If a needed detail is missing (which deal, what day), ask instead of "
+        "guessing. "
+        + _now_note(registry.tz)
         + scope_note
     )
     tools = registry.langchain_tools()
@@ -139,6 +150,7 @@ async def stream_turn(
     started = time.monotonic()
     first_token_at = None
     answer = ""
+    sent_actions = 0
     last_checkpoint = 0
     budget = client.RunBudget()
 
@@ -150,6 +162,14 @@ async def stream_turn(
                 stream_mode="messages",
             ):
                 message, metadata = event
+                # A draft tool ran: show its card now, while the answer is
+                # still streaming, and keep the row's copy current so a
+                # mid-turn commit (or a failure) does not lose it.
+                if len(registry.actions) > sent_actions:
+                    for action in registry.actions[sent_actions:]:
+                        yield json.dumps({"type": "action", "action": action}, default=str)
+                    sent_actions = len(registry.actions)
+                    assistant.actions = [dict(a) for a in registry.actions]
                 if not isinstance(message, AIMessageChunk):
                     continue
                 if metadata.get("langgraph_node") != "agent":
@@ -171,6 +191,9 @@ async def stream_turn(
                     last_checkpoint = len(answer)
 
         assistant.content = answer
+        for action in registry.actions[sent_actions:]:
+            yield json.dumps({"type": "action", "action": action}, default=str)
+        assistant.actions = [dict(a) for a in registry.actions] or None
         assistant.status = MessageStatus.COMPLETE
         assistant.latency_ms = int((time.monotonic() - started) * 1000)
         assistant.token_usage = {
@@ -196,16 +219,28 @@ async def stream_turn(
         # (`chat_stream_timeout_seconds`) finds it, which would show a
         # spinner on reload for up to fifteen minutes.
         logger.info("chat.turn_cancelled session=%s", session_id)
-        await _mark_failed(assistant_id, answer, started)
+        await _mark_failed(assistant_id, answer, started, registry.actions)
         raise
     except Exception as exc:
         await db.rollback()
-        await _mark_failed(assistant_id, answer, started)
+        await _mark_failed(assistant_id, answer, started, registry.actions)
         logger.exception("chat.turn_failed session=%s", session_id)
         yield json.dumps({"type": "error", "detail": str(exc)})
 
 
-async def _mark_failed(assistant_id, answer: str, started: float) -> None:
+def _now_note(tz) -> str:
+    """Today's date and time for the system prompt.
+
+    Without it the model has no idea what day it is, and "Friday" or "next
+    Tuesday at 3pm" resolve to whatever its training data suggests.
+    """
+    now = datetime.now(tz)
+    return "Now: %s, %s (timezone %s). Resolve relative dates against this. " % (
+        now.strftime("%A %Y-%m-%d"), now.strftime("%H:%M"), getattr(tz, "key", "UTC"),
+    )
+
+
+async def _mark_failed(assistant_id, answer: str, started: float, actions=None) -> None:
     """Record a turn that did not complete, keeping what had streamed.
 
     A fresh session, not the request's: after a cancellation the request's
@@ -217,6 +252,9 @@ async def _mark_failed(assistant_id, answer: str, started: float) -> None:
             row = await fresh.get(ChatMessage, assistant_id)
             if row is not None and row.status == MessageStatus.STREAMING:
                 row.content = answer
+                # Drafts made before the failure are still valid proposals.
+                if actions:
+                    row.actions = [dict(a) for a in actions]
                 row.status = MessageStatus.ERROR
                 row.latency_ms = int((time.monotonic() - started) * 1000)
                 await fresh.commit()

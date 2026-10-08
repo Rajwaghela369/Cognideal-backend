@@ -221,24 +221,8 @@ async def create_task(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    await task_service.get_deal_for_task_or_422(db, body.deal_id)
-
-    payload = body.model_dump()
-    to_status = payload.pop("status")
-    # Built as open, then moved -- so a task logged as already `done` gets its
-    # completed_at from the one place that knows the rule, rather than a second
-    # copy of it here.
-    task = Task(**payload, status=TaskStatus.OPEN)
-    db.add(task)
-    await task_service.apply_status_change(db, task, to_status)
-    if to_status == TaskStatus.OPEN:
-        await analysis_service.record_change(
-            db,
-            task.deal_id,
-            "task created",
-            tier1=True,
-            tier2=False,
-        )
+    # The one creation path, shared with the chat's confirmed drafts.
+    task = await task_service.create_task(db, body)
     await db.commit()
 
     response.headers["Location"] = f"/tasks/{task.id}"

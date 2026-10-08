@@ -6,15 +6,50 @@ happens when a task is completed" drift.
 """
 
 import uuid
+from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Deal, ExtractedFact, Task
-from app.models.enums import FactStatus, TaskStatus
+from app.models.enums import FactStatus, Origin, TaskStatus
+from app.schemas.v1.task import TaskCreate
 from app.services import activity
 from app.services import analysis as analysis_service
+
+
+async def create_task(
+    db: AsyncSession, body: TaskCreate, *, origin: Optional[Origin] = None
+) -> Task:
+    """Create one task: the single path for ``POST /tasks`` and chat drafts.
+
+    Built as open, then moved -- so a task logged as already ``done`` gets its
+    ``completed_at`` from the one place that knows the rule. An open task
+    refreshes the deterministic risks (tier 1) and never enqueues an AI pass.
+    ``origin`` is left to the column default unless the caller knows better --
+    a chat-drafted task is ``ai``: suggested, then confirmed by a person.
+    """
+    await get_deal_for_task_or_422(db, body.deal_id)
+
+    payload = body.model_dump()
+    to_status = payload.pop("status")
+    task = Task(**payload, status=TaskStatus.OPEN)
+    if origin is not None:
+        task.origin = origin
+    db.add(task)
+    await apply_status_change(db, task, to_status)
+    if to_status == TaskStatus.OPEN:
+        await analysis_service.record_change(
+            db,
+            task.deal_id,
+            "task created",
+            tier1=True,
+            tier2=False,
+            origin=origin,
+        )
+    await db.flush()
+    return task
 
 
 async def apply_status_change(db: AsyncSession, task: Task, to_status: TaskStatus) -> None:
