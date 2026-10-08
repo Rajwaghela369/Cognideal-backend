@@ -12,6 +12,11 @@ from app.models import Commitment, Contact, Deal, DealContact, Meeting, MeetingB
 from app.models.enums import CommitmentStatus, RiskStatus
 
 
+def _plain(value):
+    """``Severity.HIGH`` -> ``high``: the stored value, not the Python name."""
+    return getattr(value, "value", value)
+
+
 def _lines(values) -> str:
     rendered = [str(value) for value in values if value]
     return "\n".join("- %s" % value for value in rendered) or "(none)"
@@ -68,17 +73,33 @@ async def generate(
         BriefOut,
         prompt.messages(
             meeting="%s; type=%s; scheduled=%s" % (
-                meeting.title, meeting.meeting_type, meeting.scheduled_at,
+                meeting.title, _plain(meeting.meeting_type), meeting.scheduled_at,
             ),
             deal="%s; stage=%s; value=%s %s; expected close=%s" % (
-                deal.name, deal.stage, deal.value, deal.currency, deal.expected_close_date,
+                deal.name, _plain(deal.stage), deal.value, deal.currency,
+                deal.expected_close_date,
             ),
-            risks=_lines("[%s] %s: %s" % (r.severity, r.title, r.description or "") for r in risks),
+            risks=_lines(
+                "[%s] %s: %s" % (
+                    _plain(r.severity), r.title,
+                    # The detector's two-strike resolution marker is internal
+                    # bookkeeping, not part of the risk.
+                    (r.description or "").replace("[resolution-proposed]", "").strip(),
+                )
+                for r in risks
+            ),
             commitments=_lines("%s (owner=%s, due=%s)" % (
-                c.description, c.owner_name or c.owner_side, c.due_date,
+                c.description, c.owner_name or _plain(c.owner_side), c.due_date,
             ) for c in commitments),
-            summaries=_lines("%s (%s): %s" % row for row in summaries),
-            stakeholders=_lines("%s %s — %s; role=%s; influence=%s" % row for row in stakeholders),
+            # `tuple(row)`, not `row`: a SQLAlchemy 2.0 `Row` is not a tuple,
+            # so `%` took it as ONE argument and raised "not enough arguments
+            # for format string" on every deal with a prior summary or a
+            # stakeholder -- the brief failed with a 500.
+            summaries=_lines("%s (%s): %s" % tuple(row) for row in summaries),
+            stakeholders=_lines(
+                "%s %s — %s; role=%s; influence=%s" % tuple(_plain(v) for v in row)
+                for row in stakeholders
+            ),
         ),
         task="brief",
         prompt_version=prompt.version,
