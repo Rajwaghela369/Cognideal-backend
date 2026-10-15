@@ -210,6 +210,38 @@ def status() -> Dict[str, Any]:
     }
 
 
+def auth_check() -> Dict[str, Any]:
+    """Ask Langfuse whether these credentials are valid. **Blocking.**
+
+    The gap :func:`status` cannot close. Constructing the client performs no
+    network call, so ``active`` is true for a key that is mistyped, revoked,
+    or issued by the other region's cloud -- every one of which produces a
+    perfectly healthy-looking status and no traces.
+
+    Deliberately not part of :func:`status`. This is an HTTP round trip to
+    Langfuse on request, and the SDK's own docstring discourages it in
+    production code, so it is opt-in (``?auth_check=true``) and the default
+    status read stays free. Call it to diagnose, not on a timer.
+
+    Returns ``ok`` with a one-line ``detail``; never raises, because a
+    diagnostic that 500s tells you less than one that reports the failure.
+    """
+    live = client()
+    if live is None:
+        return {"ok": False, "detail": "no client -- see `reason` in status"}
+    try:
+        if live.auth_check():
+            return {"ok": True, "detail": "credentials valid for this host"}
+        return {"ok": False, "detail": "client not properly initialized"}
+    except Exception as exc:  # noqa: BLE001 -- the message is the whole point
+        # Most often a 401 from the wrong region: the EU and US clouds issue
+        # separate keys, and a key from one is simply unknown to the other.
+        return {
+            "ok": False,
+            "detail": "%s: %s" % (type(exc).__name__, str(exc)[:300]),
+        }
+
+
 def _flush_blocking() -> None:
     """The executor target for :func:`flush_soon`. Never raises.
 

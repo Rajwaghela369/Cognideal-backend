@@ -52,6 +52,39 @@ async def test_deal_scope_is_enforced_in_python(db, deal_id):
 
 
 @pytest.mark.asyncio
+async def test_a_tool_guard_reaches_the_model_instead_of_killing_the_turn():
+    """A recoverable ToolException must come back as an error result.
+
+    The guards in `tools/__init__.py` are addressed to the model: "deal_id is
+    required in a global session" is answerable by asking the user which deal.
+    They are useless if they propagate instead -- the turn dies and the user
+    sees "The answer failed", which is what happened in production when the
+    deployed LangGraph turned out to re-raise by default where the pinned-by-
+    accident local version caught everything.
+
+    So this asserts the tool's own contract rather than the graph's, and needs
+    no database: the guard fires before any query runs.
+    """
+    registry = ToolRegistry(None, None)  # global session: no scoped deal
+    timeline = next(
+        t for t in registry.langchain_tools() if t.name == "get_timeline"
+    )
+    # `deal_id: null`, not an absent key: `DealArgs` makes the field required
+    # and nullable because OpenAI's strict Structured Outputs has no optional
+    # fields, so this is the exact payload the model sends.
+    result = await timeline.ainvoke(
+        {
+            "name": "get_timeline",
+            "args": {"deal_id": None},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+    )
+    assert result.status == "error"
+    assert "deal_id is required" in result.content
+
+
+@pytest.mark.asyncio
 async def test_all_read_tools_return_evidence_handles(db, deal_id):
     deal = await db.get(Deal, deal_id)
     contact = Contact(

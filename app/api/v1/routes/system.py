@@ -5,6 +5,7 @@ it answers -- "is the pipeline moving, and if not, why" -- is asked when no deal
 id is to hand.
 """
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -25,7 +26,10 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 @router.get("/ai-status", response_model=AIStatus)
-async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
+async def ai_status(
+    auth_check: bool = False,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
     """Configuration, this process's token budget, and the worker's queue depth.
 
     Three things that are invisible otherwise. The per-run log line in
@@ -36,6 +40,17 @@ async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
     """
     now = datetime.now(timezone.utc)
     sweep_cutoff = now - timedelta(hours=settings.analysis_sweep_hours)
+
+    trace_state = tracing.status()
+    if auth_check:
+        # Blocking HTTP to Langfuse, so off the event loop -- this route is
+        # otherwise all Postgres and must not stall a worker on a third
+        # party's latency. Awaited, unlike the flush in a chat turn: here the
+        # answer *is* the response body.
+        loop = asyncio.get_running_loop()
+        verdict = await loop.run_in_executor(None, tracing.auth_check)
+        trace_state["auth_ok"] = verdict["ok"]
+        trace_state["auth_detail"] = verdict["detail"]
 
     queued_meetings = await db.scalar(
         select(func.count())
@@ -99,5 +114,5 @@ async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
         # Same reasoning as `config` above: a half-configured tracer looks
         # healthy from every angle, because it is built never to fail a turn.
         # This is the one place that difference is visible without log access.
-        "tracing": tracing.status(),
+        "tracing": trace_state,
     }

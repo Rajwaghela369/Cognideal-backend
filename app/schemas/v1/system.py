@@ -100,6 +100,10 @@ class AITracing(BaseModel):
     secret_key_set: bool
     #: Plain-language cause when `active` is false; null when tracing is up.
     reason: Optional[str] = None
+    #: Only populated for `?auth_check=true`. Null means not asked -- which is
+    #: not the same as "fine", since `active` alone never proves the keys work.
+    auth_ok: Optional[bool] = None
+    auth_detail: Optional[str] = None
 
 
 class AIStatus(BaseModel):

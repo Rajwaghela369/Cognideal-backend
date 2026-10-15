@@ -673,6 +673,26 @@ class ToolRegistry:
             StructuredTool.from_function(
                 coroutine=_logged(name, coroutine), name=name, description=description,
                 args_schema=args_schema,
+                # `ToolException` is this file's way of talking to the model --
+                # "deal_id is required in a global session", "query must not be
+                # empty", "title must be 1-255 characters". Every one of them is
+                # a thing the model can fix on its next step by asking the user
+                # or calling the tool again.
+                #
+                # Without this flag LangChain re-raises it out of `ainvoke`, and
+                # whether the turn survives then depends on the LangGraph version
+                # underneath: 0.6's ToolNode caught every exception and fed it
+                # back, 1.x re-raises by default. `langgraph` is unpinned here
+                # (see requirements.txt), so the same code answered locally and
+                # died in production with "The answer failed."
+                #
+                # Handling it at the tool makes the behaviour the tool's own and
+                # not the graph's: the message becomes an error ToolMessage the
+                # model reads and recovers from, on any version. Anything that is
+                # *not* a ToolException -- a database failure, a bug -- still
+                # propagates and still fails the turn, which is correct: the
+                # model cannot recover from those and must not be asked to try.
+                handle_tool_error=True,
             )
             for name, coroutine, args_schema, description in specs
         ]
