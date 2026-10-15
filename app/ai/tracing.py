@@ -170,6 +170,46 @@ def agent_config(
     return merged
 
 
+def status() -> Dict[str, Any]:
+    """Why tracing is or is not running, safe to serve over HTTP.
+
+    Exists because the failure this module was built to avoid -- never
+    breaking a turn -- also makes a misconfiguration silent. With tracing
+    half-configured a chat turn succeeds, logs nothing, and traces nothing,
+    which from the outside is indistinguishable from working. On a host with
+    no log access that is undebuggable, so the state is readable from
+    ``GET /system/ai-status`` instead.
+
+    **No secret is returned.** The keys are reported as booleans and the host
+    as itself; a response that echoed a key would move a credential into
+    whatever is in front of this endpoint.
+
+    Calling this resolves the client if it has not been built yet, so
+    ``active`` is the state of the real object rather than a prediction from
+    the settings -- the distinction that matters, since a key the provider
+    rejects leaves ``enabled`` true and ``active`` false.
+    """
+    live = client()
+    if not settings.langfuse_enabled:
+        reason = "LANGFUSE_ENABLED is false"
+    elif not settings.langfuse_public_key or not settings.langfuse_secret_key:
+        reason = "LANGFUSE_ENABLED is true but a key is missing"
+    elif live is None:
+        reason = "client construction failed -- see langfuse.init_failed in the log"
+    else:
+        reason = None
+    return {
+        "enabled": settings.langfuse_enabled,
+        "active": live is not None,
+        "host": settings.langfuse_host,
+        "environment": settings.langfuse_environment,
+        "sample_rate": settings.langfuse_sample_rate,
+        "public_key_set": bool(settings.langfuse_public_key),
+        "secret_key_set": bool(settings.langfuse_secret_key),
+        "reason": reason,
+    }
+
+
 def _flush_blocking() -> None:
     """The executor target for :func:`flush_soon`. Never raises.
 

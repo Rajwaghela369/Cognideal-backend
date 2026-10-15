@@ -2,10 +2,13 @@
 
 Deliberately not a metrics system. `client.py` already logs every model call as
 `ai.run task=... model=... outcome=... in=... out=... ms=...` (task 0.7), which
-is the per-run record; Langfuse and an `ai_runs` table were both declined
-(docs/ai/TASKS.md, Out of scope). What those logs cannot answer is "what is the
-state right now" -- how much token budget is left, how many deals are waiting,
-how far behind the sweep is. That is this.
+is still the per-run record; an `ai_runs` table remains declined
+(docs/ai/TASKS.md, Out of scope). Langfuse was declined there too and has since
+been added for the chat assistant only (`app/ai/tracing.py`) -- it traces a
+turn, it does not count one, so the sentence above still holds. What neither
+logs nor traces can answer is "what is the state right now" -- how much token
+budget is left, how many deals are waiting, how far behind the sweep is. That
+is this.
 """
 
 from datetime import datetime
@@ -75,9 +78,34 @@ class AIQueues(BaseModel):
     sweep_backlog: int
 
 
+class AITracing(BaseModel):
+    """Whether chat turns are being traced, and if not, why.
+
+    `enabled` is the setting; `active` is whether a client actually exists.
+    They disagree exactly when something is wrong -- a key missing, or a key
+    the provider rejected -- which is the case this block was added for.
+
+    The keys are booleans, never values: this payload is served over HTTP.
+    """
+
+    model_config = ORM
+
+    enabled: bool
+    #: The real object's state, not a prediction from the settings.
+    active: bool
+    host: str
+    environment: str
+    sample_rate: float
+    public_key_set: bool
+    secret_key_set: bool
+    #: Plain-language cause when `active` is false; null when tracing is up.
+    reason: Optional[str] = None
+
+
 class AIStatus(BaseModel):
     model_config = ORM
 
     config: AIConfig
     budget: AIBudget
     queues: AIQueues
+    tracing: AITracing

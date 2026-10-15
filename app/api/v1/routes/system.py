@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import client
+from app.ai import client, tracing
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import Deal, Meeting
@@ -96,4 +96,8 @@ async def ai_status(db: AsyncSession = Depends(get_db)) -> Any:
             "oldest_dirty_at": oldest_dirty,
             "sweep_backlog": sweep_backlog or 0,
         },
+        # Same reasoning as `config` above: a half-configured tracer looks
+        # healthy from every angle, because it is built never to fail a turn.
+        # This is the one place that difference is visible without log access.
+        "tracing": tracing.status(),
     }
