@@ -14,7 +14,7 @@ from langgraph.prebuilt import create_react_agent
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import checkpointer, client
+from app.ai import checkpointer, client, tracing
 from app.ai.prompts import get as get_prompt
 from app.ai.schemas import ChatTitleOut
 from app.ai.tools import ToolRegistry
@@ -91,6 +91,16 @@ async def stream_turn(
     # division of labour.
     store = await checkpointer.saver()
     thread = {"configurable": {"thread_id": checkpointer.thread_id(session_id)}}
+    # Tracing rides on the same config. Returned unchanged when Langfuse is
+    # off, so the untraced path is the original one rather than a variant of
+    # it (`app/ai/tracing.py`). The Langfuse session id is the chat session
+    # id, which is also the checkpoint thread id -- one conversation, one key.
+    run_config = tracing.agent_config(
+        thread,
+        session_id=session_id,
+        deal_id=session.deal_id,
+        scope=getattr(session.scope, "value", session.scope),
+    )
 
     registry = ToolRegistry(
         db,
@@ -158,7 +168,7 @@ async def stream_turn(
         async with client.track_usage(budget) as usage:
             async for event in agent.astream(
                 {"messages": [HumanMessage(content=question.strip())]},
-                config=thread,
+                config=run_config,
                 stream_mode="messages",
             ):
                 message, metadata = event
@@ -226,6 +236,10 @@ async def stream_turn(
         await _mark_failed(assistant_id, answer, started, registry.actions)
         logger.exception("chat.turn_failed session=%s", session_id)
         yield json.dumps({"type": "error", "detail": str(exc)})
+    finally:
+        # Every exit path, a failed and a cancelled turn included -- those are
+        # the traces worth having. Does not block the turn and does not raise.
+        tracing.flush_soon()
 
 
 def _now_note(tz) -> str:

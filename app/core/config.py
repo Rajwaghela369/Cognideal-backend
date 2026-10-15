@@ -263,6 +263,30 @@ class Settings(BaseSettings):
     # needs. Bounds the cost of a prompt bug to one run.
     ai_token_ceiling_per_run: int = 200_000
 
+    # --- Observability (Langfuse) ---
+    # Tracing for the chat assistant: one trace per turn, with the ReAct
+    # agent's model calls and tool calls nested under it. Off by default for
+    # the same reason as `ai_enabled` -- an absent key must never be a
+    # prerequisite for anything -- and additive when on: `app/ai/tracing.py`
+    # returns no callbacks when disabled, so the turn runs exactly as before.
+    #
+    # Not an accounting source. `app/ai/client.py` owns the `AIRun` record and
+    # the structured log line that `docs/schema/README.md` section 10 leaves
+    # as the only run record; Langfuse is for reading a turn back, not for
+    # counting it.
+    langfuse_enabled: bool = False
+    langfuse_public_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    # Langfuse Cloud EU. The US region is https://us.cloud.langfuse.com, and a
+    # self-hosted instance is its own origin.
+    langfuse_host: str = "https://cloud.langfuse.com"
+    # Tags every trace with the deployment it came from, so local turns and
+    # production turns stay separable in one Langfuse project.
+    langfuse_environment: str = "development"
+    # Fraction of turns traced, 0.0-1.0. 1.0 while the volume is this low;
+    # the knob exists so turning tracing down never means turning it off.
+    langfuse_sample_rate: float = 1.0
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:

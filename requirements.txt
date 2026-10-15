@@ -59,6 +59,22 @@ langgraph
 langgraph-checkpoint-postgres
 psycopg[binary,pool]
 
+# --- Observability (app/ai/tracing.py) ---
+# Langfuse traces the chat assistant: one trace per turn, the ReAct agent's
+# model and tool calls nested under it. Attaches as a LangChain callback, so it
+# needs no change to any prompt, tool or model call.
+#
+# Pinned, unlike the LangChain lines above, because the integration import path
+# is version-specific: v3 is `langfuse.langchain.CallbackHandler` with
+# credentials on the client, v2 was `langfuse.callback.CallbackHandler` with
+# credentials on the handler. A resolver free to pick either major version
+# would make `tracing.py` import-error on one of them.
+#
+# Brings OpenTelemetry (v3 is built on it) and protobuf. None of it is on the
+# request path when LANGFUSE_ENABLED is false -- `tracing.py` returns no
+# callbacks and never constructs a client.
+langfuse==3.7.0
+
 # --- Tests ---
 # Unpinned for the same reason as the AI layer above.
 pytest

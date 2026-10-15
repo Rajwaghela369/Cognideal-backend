@@ -68,6 +68,13 @@ async def lifespan(app: FastAPI):
         from app.ai import checkpointer
 
         await checkpointer.close()
+    if settings.langfuse_enabled:
+        # Last traces out before the process goes. Guarded by the setting
+        # alone so this never imports the AI layer on a deployment that does
+        # not use it.
+        from app.ai import tracing
+
+        tracing.shutdown()
 
 
 def create_app() -> FastAPI:
